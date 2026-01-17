@@ -1,20 +1,70 @@
-import React, { useState } from 'react';
+/**
+ * Plans Screen - Premium weekend plans with magic generation experience
+ *
+ * Features:
+ * - Engaging plan generation loading animation
+ * - Animated plan cards with timeline visualization
+ * - Interactive feedback system
+ * - Pull-to-refresh
+ * - Empty state with call-to-action
+ */
+
+import React, { useState, useCallback } from 'react';
 import {
   View,
   Text,
-  TouchableOpacity,
   StyleSheet,
-  ScrollView,
-  ActivityIndicator,
+  RefreshControl,
+  StatusBar,
   Alert,
 } from 'react-native';
+import Animated, {
+  FadeIn,
+  FadeInDown,
+} from 'react-native-reanimated';
+import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
+import * as Haptics from 'expo-haptics';
+
+// Theme
+import { colors, typography, spacing, borderRadius, shadows, layout } from '../../theme';
+
+// Components
+import AnimatedPressable from '../../components/ui/AnimatedPressable';
+import PremiumButton from '../../components/ui/PremiumButton';
+import PlanCard from '../../components/plans/PlanCard';
+import { PlanGenerationLoader } from '../../components/plans/PlanGenerationLoader';
+
+// Services
 import { createWeekendPlans, submitFeedback } from '../../services/plansService';
 import { supabase } from '../../config/supabase';
+import soundService from '../../services/soundService';
 
-// Demo mode: set to true to test UI without backend
+// Demo mode
 const DEMO_MODE = true;
 
-const DEMO_PLANS = [
+interface Activity {
+  time: string;
+  name: string;
+  address: string;
+  duration: string;
+  type?: string;
+}
+
+interface Plan {
+  id: string;
+  plan_data: {
+    title: string;
+    date: string;
+    startTime: string;
+    endTime: string;
+    activities: Activity[];
+    reasoning: string;
+    totalDistance?: string;
+  };
+}
+
+const DEMO_PLANS: Plan[] = [
   {
     id: '1',
     plan_data: {
@@ -26,23 +76,28 @@ const DEMO_PLANS = [
         {
           time: '6:00 PM',
           name: 'Lucky Strike Bowling',
-          address: '123 Main St',
+          address: '123 Main St, Downtown',
           duration: '1.5 hours',
+          type: 'activity',
         },
         {
           time: '7:45 PM',
           name: 'Casa Luna Mexican Restaurant',
           address: '456 Oak Ave',
           duration: '1.5 hours',
+          type: 'dining',
         },
         {
           time: '9:30 PM',
-          name: 'Dessert at Sweet Treats',
+          name: 'Sweet Treats Dessert Bar',
           address: '789 Park Blvd',
           duration: '30 minutes',
+          type: 'dessert',
         },
       ],
-      reasoning: 'Based on your interest in bowling and Mexican food!',
+      reasoning:
+        'Based on your interest in bowling and Mexican food, I\'ve crafted an evening that combines active fun with delicious dining. The timeline allows for a relaxed pace with short drives between venues.',
+      totalDistance: '2.3 miles',
     },
   },
   {
@@ -55,151 +110,274 @@ const DEMO_PLANS = [
       activities: [
         {
           time: '2:00 PM',
-          name: 'Downtown Bowling Alley',
+          name: 'Retro Lanes Bowling',
           address: '321 Center St',
           duration: '2 hours',
+          type: 'activity',
         },
         {
           time: '4:15 PM',
           name: 'Taco Paradise',
           address: '654 Elm St',
           duration: '1.5 hours',
+          type: 'dining',
         },
       ],
-      reasoning: 'A more relaxed Sunday option with your favorite activities',
+      reasoning:
+        'A more relaxed Sunday option with your favorite activities. This plan gives you extra bowling time and ends earlier so you\'re refreshed for the week ahead.',
+      totalDistance: '1.8 miles',
     },
   },
 ];
 
 export default function PlansScreen() {
-  const [plans, setPlans] = useState<any[]>([]);
+  const [plans, setPlans] = useState<Plan[]>([]);
   const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [showGenerator, setShowGenerator] = useState(false);
 
   const handleGeneratePlans = async () => {
+    setShowGenerator(true);
     setLoading(true);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+
     try {
       if (DEMO_MODE) {
-        // Simulate loading delay
-        await new Promise(resolve => setTimeout(resolve, 1500));
+        // The loader handles its own timing, we just wait
+        await new Promise((resolve) => setTimeout(resolve, 7000));
         setPlans(DEMO_PLANS);
-        return;
+        await soundService.playPlanReady();
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      } else {
+        // Get user location from preferences
+        const {
+          data: { user },
+        } = await supabase.auth.getUser();
+        const { data: prefs } = await supabase
+          .from('user_preferences')
+          .select('*')
+          .eq('user_id', user?.id)
+          .single();
+
+        if (!prefs?.location_city) {
+          Alert.alert(
+            'Location Required',
+            'Please set your location in Settings first'
+          );
+          setShowGenerator(false);
+          setLoading(false);
+          return;
+        }
+
+        const userLocation = {
+          lat: prefs.location_lat,
+          lng: prefs.location_lng,
+          city: prefs.location_city,
+        };
+
+        const newPlans = await createWeekendPlans(userLocation);
+        setPlans(newPlans);
+        await soundService.playPlanReady();
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       }
-
-      // Get user location from preferences
-      const { data: { user } } = await supabase.auth.getUser();
-      const { data: prefs } = await supabase
-        .from('user_preferences')
-        .select('*')
-        .eq('user_id', user?.id)
-        .single();
-
-      if (!prefs?.location_city) {
-        Alert.alert(
-          'Location Required',
-          'Please set your location in Settings first'
-        );
-        return;
-      }
-
-      const userLocation = {
-        lat: prefs.location_lat,
-        lng: prefs.location_lng,
-        city: prefs.location_city,
-      };
-
-      const newPlans = await createWeekendPlans(userLocation);
-      setPlans(newPlans);
     } catch (error) {
       console.error('Failed to generate plans:', error);
+      await soundService.playError();
       Alert.alert('Error', 'Failed to generate plans. Please try again.');
     } finally {
+      setShowGenerator(false);
       setLoading(false);
     }
   };
 
+  const handleRefresh = useCallback(async () => {
+    if (plans.length === 0) return;
+
+    setRefreshing(true);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+
+    // Simulate refresh
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    setRefreshing(false);
+  }, [plans]);
+
   const handleFeedback = async (planId: string, rating: 'up' | 'down') => {
     try {
       if (DEMO_MODE) {
-        Alert.alert('Thanks!', 'Your feedback helps us improve your plans (Demo Mode)');
+        // Just show confirmation in demo mode
         return;
       }
       await submitFeedback(planId, rating);
-      Alert.alert('Thanks!', 'Your feedback helps us improve your plans');
     } catch (error) {
       console.error('Failed to submit feedback:', error);
     }
   };
 
-  const renderPlan = (plan: any) => (
-    <View key={plan.id} style={styles.planCard}>
-      <Text style={styles.planTitle}>{plan.plan_data.title}</Text>
-      <Text style={styles.planDate}>
-        {plan.plan_data.date} • {plan.plan_data.startTime} - {plan.plan_data.endTime}
-      </Text>
-
-      {/* Activities */}
-      {plan.plan_data.activities.map((activity: any, index: number) => (
-        <View key={index} style={styles.activity}>
-          <Text style={styles.activityTime}>{activity.time}</Text>
-          <View style={styles.activityDetails}>
-            <Text style={styles.activityName}>{activity.name}</Text>
-            <Text style={styles.activityAddress}>{activity.address}</Text>
-            <Text style={styles.activityDuration}>{activity.duration}</Text>
-          </View>
-        </View>
-      ))}
-
-      {/* Reasoning */}
-      <View style={styles.reasoning}>
-        <Text style={styles.reasoningText}>💡 {plan.plan_data.reasoning}</Text>
-      </View>
-
-      {/* Feedback Buttons */}
-      <View style={styles.feedbackButtons}>
-        <TouchableOpacity
-          style={[styles.feedbackButton, styles.feedbackUp]}
-          onPress={() => handleFeedback(plan.id, 'up')}
-        >
-          <Text style={styles.feedbackIcon}>👍</Text>
-          <Text style={styles.feedbackText}>I like this</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.feedbackButton, styles.feedbackDown]}
-          onPress={() => handleFeedback(plan.id, 'down')}
-        >
-          <Text style={styles.feedbackIcon}>👎</Text>
-          <Text style={styles.feedbackText}>Not for me</Text>
-        </TouchableOpacity>
-      </View>
-    </View>
-  );
+  const handleRegenerate = () => {
+    setPlans([]);
+    handleGeneratePlans();
+  };
 
   return (
     <View style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.title}>Weekend Plans</Text>
+      <StatusBar barStyle="light-content" />
+
+      {/* Header */}
+      <LinearGradient
+        colors={colors.gradients.primary as [string, string]}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={styles.header}
+      >
+        <Animated.View entering={FadeInDown.duration(500)}>
+          <Text style={styles.title}>Weekend Plans</Text>
+          <Text style={styles.subtitle}>
+            {plans.length > 0
+              ? `${plans.length} plans ready for you`
+              : 'Let\'s plan something amazing'}
+          </Text>
+        </Animated.View>
+      </LinearGradient>
+
+      {/* Content */}
+      {showGenerator ? (
+        <PlanGenerationLoader
+          isLoading={loading}
+          onComplete={() => setShowGenerator(false)}
+        />
+      ) : plans.length === 0 ? (
+        <EmptyState onGenerate={handleGeneratePlans} loading={loading} />
+      ) : (
+        <Animated.ScrollView
+          entering={FadeIn.delay(300)}
+          style={styles.plansContainer}
+          contentContainerStyle={styles.plansContent}
+          showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={handleRefresh}
+              tintColor={colors.primary[500]}
+              colors={[colors.primary[500]]}
+            />
+          }
+        >
+          {/* Plans header */}
+          <View style={styles.plansHeader}>
+            <View>
+              <Text style={styles.plansTitle}>Your Plans</Text>
+              <Text style={styles.plansSubtitle}>
+                Tap a plan to see details
+              </Text>
+            </View>
+            <AnimatedPressable
+              onPress={handleRegenerate}
+              style={styles.regenerateButton}
+              hapticType="light"
+            >
+              <Ionicons
+                name="refresh"
+                size={18}
+                color={colors.primary[500]}
+              />
+              <Text style={styles.regenerateText}>New Plans</Text>
+            </AnimatedPressable>
+          </View>
+
+          {/* Plan cards */}
+          {plans.map((plan, index) => (
+            <PlanCard
+              key={plan.id}
+              plan={plan}
+              index={index}
+              onFeedback={handleFeedback}
+            />
+          ))}
+
+          {/* Bottom spacing */}
+          <View style={styles.bottomSpacer} />
+        </Animated.ScrollView>
+      )}
+    </View>
+  );
+}
+
+// Empty State Component
+function EmptyState({
+  onGenerate,
+  loading,
+}: {
+  onGenerate: () => void;
+  loading: boolean;
+}) {
+  return (
+    <Animated.View
+      entering={FadeIn.delay(300)}
+      style={styles.emptyState}
+    >
+      <View style={styles.emptyIconContainer}>
+        <LinearGradient
+          colors={colors.gradients.primary as [string, string]}
+          style={styles.emptyIconGradient}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+        >
+          <Ionicons name="sparkles" size={48} color={colors.neutral[0]} />
+        </LinearGradient>
+
+        {/* Decorative rings */}
+        <View style={[styles.decorativeRing, styles.ring1]} />
+        <View style={[styles.decorativeRing, styles.ring2]} />
+        <View style={[styles.decorativeRing, styles.ring3]} />
       </View>
 
-      {plans.length === 0 ? (
-        <View style={styles.emptyState}>
-          <Text style={styles.emptyText}>Ready to plan your weekend?</Text>
-          <TouchableOpacity
-            style={styles.generateButton}
-            onPress={handleGeneratePlans}
-            disabled={loading}
-          >
-            {loading ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <Text style={styles.generateButtonText}>Generate Plans</Text>
-            )}
-          </TouchableOpacity>
-        </View>
-      ) : (
-        <ScrollView style={styles.plansContainer}>
-          {plans.map(renderPlan)}
-        </ScrollView>
-      )}
+      <Text style={styles.emptyTitle}>Ready to plan your weekend?</Text>
+      <Text style={styles.emptyText}>
+        I'll analyze your notes and preferences to create personalized plans
+        just for you.
+      </Text>
+
+      <View style={styles.featureList}>
+        <FeatureItem
+          icon="location"
+          text="Finds places near you"
+        />
+        <FeatureItem
+          icon="heart"
+          text="Based on your preferences"
+        />
+        <FeatureItem
+          icon="time"
+          text="Optimized timing"
+        />
+      </View>
+
+      <PremiumButton
+        onPress={onGenerate}
+        loading={loading}
+        gradient
+        size="lg"
+        fullWidth
+        icon={
+          !loading ? (
+            <Ionicons name="sparkles" size={20} color={colors.neutral[0]} />
+          ) : undefined
+        }
+      >
+        Generate Plans
+      </PremiumButton>
+    </Animated.View>
+  );
+}
+
+// Feature Item Component
+function FeatureItem({ icon, text }: { icon: string; text: string }) {
+  return (
+    <View style={styles.featureItem}>
+      <View style={styles.featureIcon}>
+        <Ionicons name={icon as any} size={16} color={colors.primary[500]} />
+      </View>
+      <Text style={styles.featureText}>{text}</Text>
     </View>
   );
 }
@@ -207,136 +385,141 @@ export default function PlansScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f5f5f5',
+    backgroundColor: colors.background.primary,
   },
   header: {
-    padding: 20,
-    paddingTop: 60,
-    backgroundColor: '#6366f1',
+    paddingTop: layout.statusBarOffset + spacing[4],
+    paddingHorizontal: spacing[5],
+    paddingBottom: spacing[5],
   },
   title: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: '#fff',
+    fontSize: typography.fontSize['2xl'],
+    fontWeight: typography.fontWeight.bold,
+    color: colors.neutral[0],
+    marginBottom: spacing[1],
+  },
+  subtitle: {
+    fontSize: typography.fontSize.base,
+    color: 'rgba(255,255,255,0.8)',
+  },
+  plansContainer: {
+    flex: 1,
+  },
+  plansContent: {
+    padding: spacing[5],
+  },
+  plansHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: spacing[4],
+  },
+  plansTitle: {
+    fontSize: typography.fontSize.lg,
+    fontWeight: typography.fontWeight.semibold,
+    color: colors.neutral[900],
+  },
+  plansSubtitle: {
+    fontSize: typography.fontSize.sm,
+    color: colors.neutral[500],
+    marginTop: spacing[1],
+  },
+  regenerateButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing[1],
+    paddingVertical: spacing[2],
+    paddingHorizontal: spacing[3],
+    backgroundColor: colors.primary[50],
+    borderRadius: borderRadius.full,
+  },
+  regenerateText: {
+    fontSize: typography.fontSize.sm,
+    fontWeight: typography.fontWeight.semibold,
+    color: colors.primary[600],
+  },
+  bottomSpacer: {
+    height: spacing[10],
   },
   emptyState: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 40,
+    paddingHorizontal: spacing[8],
+  },
+  emptyIconContainer: {
+    position: 'relative',
+    marginBottom: spacing[6],
+  },
+  emptyIconGradient: {
+    width: 100,
+    height: 100,
+    borderRadius: 50,
+    justifyContent: 'center',
+    alignItems: 'center',
+    ...shadows.primary,
+  },
+  decorativeRing: {
+    position: 'absolute',
+    borderWidth: 1,
+    borderColor: colors.primary[200],
+    borderRadius: 9999,
+  },
+  ring1: {
+    width: 130,
+    height: 130,
+    top: -15,
+    left: -15,
+    opacity: 0.5,
+  },
+  ring2: {
+    width: 160,
+    height: 160,
+    top: -30,
+    left: -30,
+    opacity: 0.3,
+  },
+  ring3: {
+    width: 190,
+    height: 190,
+    top: -45,
+    left: -45,
+    opacity: 0.15,
+  },
+  emptyTitle: {
+    fontSize: typography.fontSize.xl,
+    fontWeight: typography.fontWeight.bold,
+    color: colors.neutral[900],
+    textAlign: 'center',
+    marginBottom: spacing[2],
   },
   emptyText: {
-    fontSize: 18,
-    color: '#666',
-    marginBottom: 24,
+    fontSize: typography.fontSize.base,
+    color: colors.neutral[500],
     textAlign: 'center',
+    lineHeight: typography.fontSize.base * typography.lineHeight.relaxed,
+    marginBottom: spacing[6],
   },
-  generateButton: {
-    backgroundColor: '#6366f1',
-    paddingHorizontal: 32,
-    paddingVertical: 16,
-    borderRadius: 8,
-    minWidth: 200,
-    alignItems: 'center',
+  featureList: {
+    width: '100%',
+    marginBottom: spacing[8],
+    gap: spacing[3],
   },
-  generateButtonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  plansContainer: {
-    flex: 1,
-    padding: 20,
-  },
-  planCard: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    padding: 20,
-    marginBottom: 20,
-    elevation: 3,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-  },
-  planTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#333',
-    marginBottom: 4,
-  },
-  planDate: {
-    fontSize: 14,
-    color: '#666',
-    marginBottom: 16,
-  },
-  activity: {
-    flexDirection: 'row',
-    marginBottom: 16,
-    paddingBottom: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
-  },
-  activityTime: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#6366f1',
-    width: 70,
-  },
-  activityDetails: {
-    flex: 1,
-  },
-  activityName: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#333',
-    marginBottom: 2,
-  },
-  activityAddress: {
-    fontSize: 14,
-    color: '#666',
-    marginBottom: 2,
-  },
-  activityDuration: {
-    fontSize: 12,
-    color: '#999',
-  },
-  reasoning: {
-    backgroundColor: '#f0f9ff',
-    padding: 12,
-    borderRadius: 8,
-    marginBottom: 16,
-  },
-  reasoningText: {
-    fontSize: 14,
-    color: '#333',
-    lineHeight: 20,
-  },
-  feedbackButtons: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  feedbackButton: {
-    flex: 1,
+  featureItem: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: spacing[3],
+  },
+  featureIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: colors.primary[50],
     justifyContent: 'center',
-    padding: 12,
-    borderRadius: 8,
-    gap: 8,
+    alignItems: 'center',
   },
-  feedbackUp: {
-    backgroundColor: '#10b981',
-  },
-  feedbackDown: {
-    backgroundColor: '#ef4444',
-  },
-  feedbackIcon: {
-    fontSize: 20,
-  },
-  feedbackText: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: '600',
+  featureText: {
+    fontSize: typography.fontSize.base,
+    color: colors.neutral[700],
   },
 });
