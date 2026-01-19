@@ -84,8 +84,20 @@ class NotificationService {
       // Calculate seconds until the scheduled date
       const secondsUntil = Math.max(1, Math.floor((scheduledDate.getTime() - Date.now()) / 1000));
 
-      console.log('Scheduling notification for:', scheduledDate.toISOString());
-      console.log('Seconds until notification:', secondsUntil);
+      console.log('=== SCHEDULING NOTIFICATION ===');
+      console.log('Current time:', new Date().toLocaleString());
+      console.log('Scheduled for:', scheduledDate.toLocaleString());
+      console.log('Scheduled ISO:', scheduledDate.toISOString());
+      console.log('Seconds until:', secondsUntil);
+      console.log('Minutes until:', Math.round(secondsUntil / 60));
+      console.log('Platform:', Platform.OS);
+
+      // Use time interval trigger for both platforms (more reliable in Expo Go)
+      const trigger: Notifications.NotificationTriggerInput = {
+        type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
+        seconds: secondsUntil,
+        ...(Platform.OS === 'android' && { channelId: 'reminders' }),
+      };
 
       const notificationId = await Notifications.scheduleNotificationAsync({
         content: {
@@ -95,13 +107,14 @@ class NotificationService {
           priority: Notifications.AndroidNotificationPriority.HIGH,
           data: { type: 'reminder' },
         },
-        trigger: {
-          seconds: secondsUntil,
-          channelId: 'reminders',
-        },
+        trigger,
       });
 
       console.log('Notification scheduled:', notificationId, 'for', scheduledDate.toLocaleString());
+
+      // Debug: Log all scheduled notifications to verify
+      await this.debugLogScheduledNotifications();
+
       return notificationId;
     } catch (error) {
       console.error('Failed to schedule notification:', error);
@@ -370,6 +383,41 @@ class NotificationService {
       console.error('Failed to get scheduled notifications:', error);
       return [];
     }
+  }
+
+  /**
+   * Debug: Log all scheduled notifications with their trigger times
+   * Call this to verify notifications are scheduled correctly
+   */
+  async debugLogScheduledNotifications(): Promise<void> {
+    const notifications = await this.getAllScheduledNotifications();
+    console.log('=== SCHEDULED NOTIFICATIONS ===');
+    console.log(`Total: ${notifications.length}`);
+
+    notifications.forEach((notification, index) => {
+      const trigger = notification.trigger as any;
+      let triggerInfo = 'Unknown trigger';
+
+      if (trigger) {
+        if (trigger.type === 'date' && trigger.date) {
+          const date = new Date(trigger.date);
+          triggerInfo = `Date: ${date.toLocaleString()}`;
+        } else if (trigger.type === 'timeInterval' && trigger.seconds) {
+          const minutes = Math.floor(trigger.seconds / 60);
+          const hours = Math.floor(minutes / 60);
+          triggerInfo = `In ${hours}h ${minutes % 60}m (${trigger.seconds}s)`;
+        } else if (trigger.seconds) {
+          triggerInfo = `Seconds: ${trigger.seconds}`;
+        }
+      }
+
+      console.log(`[${index + 1}] ID: ${notification.identifier}`);
+      console.log(`    Title: ${notification.content.title}`);
+      console.log(`    Body: ${notification.content.body}`);
+      console.log(`    Trigger: ${triggerInfo}`);
+    });
+
+    console.log('===============================');
   }
 
   /**

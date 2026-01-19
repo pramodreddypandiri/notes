@@ -35,6 +35,8 @@ interface ReminderPickerProps {
   onSelectReminder: (date: Date) => void;
   themedColors: ReturnType<typeof getThemedColors>;
   initialDate?: Date;
+  /** When true, renders as an overlay without its own Modal wrapper */
+  inline?: boolean;
 }
 
 interface QuickOption {
@@ -49,6 +51,7 @@ export function ReminderPicker({
   onSelectReminder,
   themedColors,
   initialDate,
+  inline = false,
 }: ReminderPickerProps) {
   const [selectedDate, setSelectedDate] = useState<Date>(initialDate || new Date());
   const [showDatePicker, setShowDatePicker] = useState(false);
@@ -208,39 +211,32 @@ export function ReminderPicker({
 
   if (!visible) return null;
 
-  return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="none"
-      statusBarTranslucent
-      onRequestClose={onClose}
-    >
-      <View style={styles.modalContainer}>
-        {/* Backdrop */}
-        <Animated.View
-          entering={FadeIn.duration(200)}
-          exiting={FadeOut.duration(150)}
-          style={styles.backdrop}
+  const pickerContent = (
+    <>
+      {/* Backdrop */}
+      <Animated.View
+        entering={FadeIn.duration(200)}
+        exiting={FadeOut.duration(150)}
+        style={styles.backdrop}
+      >
+        <AnimatedPressable
+          onPress={onClose}
+          style={StyleSheet.absoluteFill}
+          hapticType="light"
         >
-          <AnimatedPressable
-            onPress={onClose}
-            style={StyleSheet.absoluteFill}
-            hapticType="light"
-          >
-            <View style={StyleSheet.absoluteFill} />
-          </AnimatedPressable>
-        </Animated.View>
+          <View style={StyleSheet.absoluteFill} />
+        </AnimatedPressable>
+      </Animated.View>
 
-        {/* Content */}
-        <Animated.View
-          entering={SlideInDown.springify().damping(20)}
-          exiting={SlideOutDown.duration(200)}
-          style={[
-            styles.content,
-            { backgroundColor: themedColors.surface.primary },
-          ]}
-        >
+      {/* Content */}
+      <Animated.View
+        entering={SlideInDown.duration(300).damping(0.9)}
+        exiting={SlideOutDown.duration(200)}
+        style={[
+          styles.content,
+          { backgroundColor: themedColors.surface.primary },
+        ]}
+      >
           {/* Header */}
           <View style={styles.header}>
             <Text style={[styles.title, { color: themedColors.text.primary }]}>
@@ -395,6 +391,29 @@ export function ReminderPicker({
             </PremiumButton>
           </View>
         </Animated.View>
+    </>
+  );
+
+  // When inline, render without Modal wrapper
+  if (inline) {
+    return (
+      <View style={styles.modalContainer}>
+        {pickerContent}
+      </View>
+    );
+  }
+
+  // Standard modal rendering
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="none"
+      statusBarTranslucent
+      onRequestClose={onClose}
+    >
+      <View style={styles.modalContainer}>
+        {pickerContent}
       </View>
     </Modal>
   );

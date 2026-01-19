@@ -9,7 +9,7 @@
  * - Dark mode support
  */
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -99,8 +99,11 @@ export function TranscriptionReview({
   };
 
   const handleReminderSelect = (date: Date) => {
-    // Update both states together
     setCustomReminderDate(date);
+    setShowReminderPicker(false);
+  };
+
+  const handleReminderPickerClose = () => {
     setShowReminderPicker(false);
   };
 
@@ -114,11 +117,11 @@ export function TranscriptionReview({
   return (
     <>
       <Modal
-        visible={visible && !showReminderPicker}
+        visible={visible}
         transparent
         animationType="none"
         statusBarTranslucent
-        onRequestClose={handleCancel}
+        onRequestClose={showReminderPicker ? handleReminderPickerClose : handleCancel}
       >
         <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -303,19 +306,22 @@ export function TranscriptionReview({
               </>
             )}
           </Animated.View>
+
+          {/* Reminder Picker - rendered as inline overlay within same modal */}
+          {showReminderPicker && (
+            <View style={StyleSheet.absoluteFill}>
+              <ReminderPicker
+                visible={showReminderPicker}
+                onClose={handleReminderPickerClose}
+                onSelectReminder={handleReminderSelect}
+                themedColors={themedColors}
+                initialDate={activeReminder?.date}
+                inline
+              />
+            </View>
+          )}
         </KeyboardAvoidingView>
       </Modal>
-
-      {/* Reminder Picker Modal - rendered separately to avoid nested modal issues */}
-      {showReminderPicker && (
-        <ReminderPicker
-          visible={showReminderPicker}
-          onClose={() => setShowReminderPicker(false)}
-          onSelectReminder={handleReminderSelect}
-          themedColors={themedColors}
-          initialDate={activeReminder?.date}
-        />
-      )}
     </>
   );
 }

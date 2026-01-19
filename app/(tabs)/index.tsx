@@ -46,6 +46,7 @@ import TopBar from '../../components/common/TopBar';
 import voiceService, { isGarbageTranscription, EMPTY_TRANSCRIPTION_PLACEHOLDER } from '../../services/voiceService';
 import { createNoteWithReminder, getNotes, updateNoteTags } from '../../services/notesService';
 import soundService from '../../services/soundService';
+import notificationService from '../../services/notificationService';
 
 // Demo mode
 const DEMO_MODE = false;
@@ -166,6 +167,9 @@ export default function HomeScreen() {
   useEffect(() => {
     loadNotes();
     soundService.initialize();
+
+    // Debug: Log scheduled notifications on app load
+    notificationService.debugLogScheduledNotifications();
   }, []);
 
   const loadNotes = async () => {
