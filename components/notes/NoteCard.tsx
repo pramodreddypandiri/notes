@@ -25,7 +25,9 @@ import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import AnimatedPressable from '../ui/AnimatedPressable';
-import { colors, typography, spacing, borderRadius, shadows, animation, tagColors } from '../../theme';
+import { colors, typography, spacing, borderRadius, shadows, animation, tagColors, getThemedColors } from '../../theme';
+import { useTheme } from '../../context/ThemeContext';
+import notificationService from '../../services/notificationService';
 
 type NoteTag = 'reminder' | 'preference' | 'my_type' | 'my_vibe';
 
@@ -73,6 +75,9 @@ export function NoteCard({
   onTagPress,
   onPress,
 }: NoteCardProps) {
+  const { isDark } = useTheme();
+  const themedColors = getThemedColors(isDark);
+
   const translateX = useSharedValue(0);
   const deleteProgress = useSharedValue(0);
   const isDeleting = useSharedValue(false);
@@ -137,6 +142,21 @@ export function NoteCard({
     return date.toLocaleDateString();
   };
 
+  // Format reminder time - handles both ISO strings and display strings
+  const formatReminderTime = (reminderTime: string) => {
+    // Check if it's an ISO date string
+    if (reminderTime.includes('T') || reminderTime.includes('-')) {
+      try {
+        const date = new Date(reminderTime);
+        return notificationService.formatReminderDisplay(date);
+      } catch {
+        return reminderTime;
+      }
+    }
+    // Already a display string
+    return reminderTime;
+  };
+
   return (
     <Animated.View
       entering={FadeInRight.delay(index * 50).springify().damping(15)}
@@ -152,7 +172,7 @@ export function NoteCard({
 
       {/* Card */}
       <GestureDetector gesture={panGesture}>
-        <Animated.View style={[styles.card, shadows.md, animatedCardStyle]}>
+        <Animated.View style={[styles.card, shadows.md, animatedCardStyle, { backgroundColor: themedColors.surface.primary }]}>
           <AnimatedPressable
             onPress={() => onPress?.(note.id)}
             onLongPress={() => onTagPress(note.id)}
@@ -162,12 +182,12 @@ export function NoteCard({
           >
             <View style={styles.mainContent}>
               {/* Note text */}
-              <Text style={styles.noteText} numberOfLines={2}>
+              <Text style={[styles.noteText, { color: themedColors.text.primary }]} numberOfLines={2}>
                 {note.parsed_data?.summary || note.transcript}
               </Text>
 
               {/* Timestamp */}
-              <Text style={styles.timestamp}>{formatTime(note.created_at)}</Text>
+              <Text style={[styles.timestamp, { color: themedColors.text.tertiary }]}>{formatTime(note.created_at)}</Text>
 
               {/* Tags */}
               {note.tags && note.tags.length > 0 && (
@@ -196,9 +216,11 @@ export function NoteCard({
               {/* Reminder time */}
               {note.reminder_time && (
                 <View style={styles.reminderContainer}>
-                  <View style={styles.reminderBadge}>
-                    <Ionicons name="time" size={12} color={colors.primary[500]} />
-                    <Text style={styles.reminderText}>{note.reminder_time}</Text>
+                  <View style={[styles.reminderBadge, { backgroundColor: isDark ? colors.accent.rose.dark + '20' : colors.accent.rose.light }]}>
+                    <Ionicons name="notifications" size={14} color={colors.accent.rose.base} />
+                    <Text style={[styles.reminderText, { color: isDark ? colors.accent.rose.light : colors.accent.rose.dark }]}>
+                      {formatReminderTime(note.reminder_time)}
+                    </Text>
                   </View>
                 </View>
               )}
@@ -208,7 +230,7 @@ export function NoteCard({
             <View style={styles.actions}>
               <AnimatedPressable
                 onPress={() => onTagPress(note.id)}
-                style={styles.actionButton}
+                style={[styles.actionButton, { backgroundColor: themedColors.surface.secondary }]}
                 hapticType="light"
               >
                 <Ionicons name="pricetag-outline" size={20} color={colors.primary[500]} />
@@ -244,7 +266,6 @@ const styles = StyleSheet.create({
     color: colors.neutral[0],
   },
   card: {
-    backgroundColor: colors.neutral[0],
     borderRadius: borderRadius.lg,
     overflow: 'hidden',
   },
@@ -259,12 +280,10 @@ const styles = StyleSheet.create({
   noteText: {
     fontSize: typography.fontSize.base,
     fontWeight: typography.fontWeight.medium,
-    color: colors.neutral[900],
     lineHeight: typography.fontSize.base * typography.lineHeight.relaxed,
   },
   timestamp: {
     fontSize: typography.fontSize.xs,
-    color: colors.neutral[400],
     marginTop: spacing[2],
   },
   tagsContainer: {
@@ -291,17 +310,15 @@ const styles = StyleSheet.create({
   reminderBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: spacing[1],
-    backgroundColor: colors.primary[50],
-    paddingHorizontal: spacing[2],
-    paddingVertical: spacing[1],
-    borderRadius: borderRadius.sm,
+    gap: spacing[2],
+    paddingHorizontal: spacing[3],
+    paddingVertical: spacing[2],
+    borderRadius: borderRadius.md,
     alignSelf: 'flex-start',
   },
   reminderText: {
-    fontSize: typography.fontSize.xs,
+    fontSize: typography.fontSize.sm,
     fontWeight: typography.fontWeight.medium,
-    color: colors.primary[600],
   },
   actions: {
     justifyContent: 'flex-start',
@@ -310,7 +327,6 @@ const styles = StyleSheet.create({
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: colors.neutral[50],
     justifyContent: 'center',
     alignItems: 'center',
   },

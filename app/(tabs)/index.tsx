@@ -43,8 +43,8 @@ import TranscriptionReview from '../../components/notes/TranscriptionReview';
 import TopBar from '../../components/common/TopBar';
 
 // Services
-import voiceService from '../../services/voiceService';
-import { createNote, getNotes } from '../../services/notesService';
+import voiceService, { isGarbageTranscription, EMPTY_TRANSCRIPTION_PLACEHOLDER } from '../../services/voiceService';
+import { createNoteWithReminder, getNotes, updateNoteTags } from '../../services/notesService';
 import soundService from '../../services/soundService';
 
 // Demo mode
@@ -140,6 +140,7 @@ export default function HomeScreen() {
   const [showTranscriptionReview, setShowTranscriptionReview] = useState(false);
   const [currentTranscription, setCurrentTranscription] = useState('');
   const [currentAudioUri, setCurrentAudioUri] = useState<string | null>(null);
+  const [externalRecordingStart, setExternalRecordingStart] = useState(false);
 
   // Tag modal state
   const [showTagSheet, setShowTagSheet] = useState(false);
@@ -208,7 +209,7 @@ export default function HomeScreen() {
         setNotes([newNote, ...notes]);
         await soundService.playSuccess();
       } else {
-        await createNote(text);
+        await createNoteWithReminder({ transcript: text });
         await loadNotes();
         await soundService.playSuccess();
       }
@@ -236,6 +237,7 @@ export default function HomeScreen() {
     if (!isRecording) return;
 
     setIsRecording(false);
+    setExternalRecordingStart(false);
     setIsProcessing(true);
     setShowTranscriptionReview(true);
 
@@ -253,7 +255,13 @@ export default function HomeScreen() {
         } else {
           // Transcribe using OpenAI Whisper
           const transcript = await voiceService.transcribeAudio(audioUri);
-          setCurrentTranscription(transcript);
+
+          // Check if transcription is garbage (empty audio, noise, non-English hallucination)
+          if (isGarbageTranscription(transcript)) {
+            setCurrentTranscription(EMPTY_TRANSCRIPTION_PLACEHOLDER);
+          } else {
+            setCurrentTranscription(transcript);
+          }
         }
       }
     } catch (error) {
@@ -270,10 +278,11 @@ export default function HomeScreen() {
     if (isRecording) {
       voiceService.cancelRecording();
       setIsRecording(false);
+      setExternalRecordingStart(false);
     }
   };
 
-  const handleSaveTranscription = async (text: string) => {
+  const handleSaveTranscription = async (text: string, reminderDate?: Date) => {
     try {
       if (DEMO_MODE) {
         const newNote: Note = {
@@ -284,10 +293,17 @@ export default function HomeScreen() {
             type: 'intent',
           },
           created_at: new Date().toISOString(),
+          tags: reminderDate ? ['reminder'] : undefined,
+          reminder_time: reminderDate?.toISOString(),
         };
         setNotes([newNote, ...notes]);
       } else {
-        await createNote(text, currentAudioUri || undefined);
+        await createNoteWithReminder({
+          transcript: text,
+          audioUrl: currentAudioUri || undefined,
+          customReminderTime: reminderDate,
+          forceReminder: !!reminderDate,
+        });
         await loadNotes();
       }
       await soundService.playSuccess();
@@ -307,6 +323,8 @@ export default function HomeScreen() {
     setShowTranscriptionReview(false);
     setCurrentTranscription('');
     setCurrentAudioUri(null);
+    // Mark as external recording start (tap-to-stop mode)
+    setExternalRecordingStart(true);
     // Small delay before allowing re-record
     setTimeout(() => {
       handleRecordingStart();
@@ -340,29 +358,48 @@ export default function HomeScreen() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
   };
 
-  const applyTag = (tag: NoteTag) => {
+  const applyTag = async (tag: NoteTag) => {
     if (!selectedNoteId) return;
 
-    setNotes(
-      notes.map((note) => {
-        if (note.id === selectedNoteId) {
-          const currentTags = note.tags || [];
-          const hasTag = currentTags.includes(tag);
+    const note = notes.find((n) => n.id === selectedNoteId);
+    if (!note) return;
 
-          return {
-            ...note,
-            tags: hasTag
-              ? currentTags.filter((t) => t !== tag)
-              : [...currentTags, tag],
-          };
+    const currentTags = note.tags || [];
+    const hasTag = currentTags.includes(tag);
+    const newTags = hasTag
+      ? currentTags.filter((t) => t !== tag)
+      : [...currentTags, tag];
+
+    // Update local state immediately for responsive UI
+    setNotes(
+      notes.map((n) => {
+        if (n.id === selectedNoteId) {
+          return { ...n, tags: newTags };
         }
-        return note;
+        return n;
       })
     );
 
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setShowTagSheet(false);
     setSelectedNoteId(null);
+
+    // Save to database (don't block UI)
+    if (!DEMO_MODE) {
+      const success = await updateNoteTags(selectedNoteId, newTags);
+      if (!success) {
+        // Revert on failure
+        setNotes(
+          notes.map((n) => {
+            if (n.id === selectedNoteId) {
+              return { ...n, tags: currentTags };
+            }
+            return n;
+          })
+        );
+        Alert.alert('Error', 'Failed to update tag. Please try again.');
+      }
+    }
   };
 
   const navigateToPlans = () => {
@@ -456,6 +493,7 @@ export default function HomeScreen() {
           isRecording={isRecording}
           recordingDuration={recordingDuration}
           themedColors={themedColors}
+          externalRecordingStart={externalRecordingStart}
         />
       </View>
 

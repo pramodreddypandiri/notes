@@ -7,8 +7,16 @@ Notifications.setNotificationHandler({
     shouldShowAlert: true,
     shouldPlaySound: true,
     shouldSetBadge: true,
+    shouldShowBanner: true,
+    shouldShowList: true,
   }),
 });
+
+export interface ReminderInfo {
+  date: Date;
+  displayText: string;
+  isValid: boolean;
+}
 
 class NotificationService {
   /**
@@ -47,6 +55,13 @@ class NotificationService {
   }
 
   /**
+   * Check if a date is valid
+   */
+  private isValidDate(date: Date): boolean {
+    return date instanceof Date && !isNaN(date.getTime()) && date.getTime() > Date.now();
+  }
+
+  /**
    * Schedule a notification for a specific date/time
    */
   async scheduleNotification(
@@ -55,10 +70,22 @@ class NotificationService {
     scheduledDate: Date
   ): Promise<string | null> {
     try {
+      // Validate the date
+      if (!this.isValidDate(scheduledDate)) {
+        console.warn('Invalid or past date for notification:', scheduledDate);
+        return null;
+      }
+
       const hasPermission = await this.requestPermissions();
       if (!hasPermission) {
         throw new Error('Notification permission not granted');
       }
+
+      // Calculate seconds until the scheduled date
+      const secondsUntil = Math.max(1, Math.floor((scheduledDate.getTime() - Date.now()) / 1000));
+
+      console.log('Scheduling notification for:', scheduledDate.toISOString());
+      console.log('Seconds until notification:', secondsUntil);
 
       const notificationId = await Notifications.scheduleNotificationAsync({
         content: {
@@ -69,12 +96,12 @@ class NotificationService {
           data: { type: 'reminder' },
         },
         trigger: {
-          date: scheduledDate,
+          seconds: secondsUntil,
           channelId: 'reminders',
         },
       });
 
-      console.log('Notification scheduled:', notificationId);
+      console.log('Notification scheduled:', notificationId, 'for', scheduledDate.toLocaleString());
       return notificationId;
     } catch (error) {
       console.error('Failed to schedule notification:', error);
@@ -85,56 +112,227 @@ class NotificationService {
   /**
    * Schedule a reminder from note text
    * Parses natural language time (e.g., "Thursday at 9am")
+   * Returns notification ID and reminder info
    */
   async scheduleReminderFromNote(
     noteText: string,
     reminderTime?: string
+  ): Promise<{ notificationId: string | null; reminderInfo: ReminderInfo }> {
+    try {
+      const reminderInfo = reminderTime
+        ? this.parseReminderTime(reminderTime)
+        : { date: new Date(Date.now() + 60 * 60 * 1000), displayText: 'In 1 hour', isValid: true };
+
+      const notificationId = await this.scheduleNotification(
+        '⏰ Reminder',
+        noteText,
+        reminderInfo.date
+      );
+
+      return { notificationId, reminderInfo };
+    } catch (error) {
+      console.error('Failed to schedule reminder from note:', error);
+      return {
+        notificationId: null,
+        reminderInfo: { date: new Date(), displayText: '', isValid: false }
+      };
+    }
+  }
+
+  /**
+   * Schedule a reminder for a specific date
+   */
+  async scheduleReminderForDate(
+    noteText: string,
+    noteId: string,
+    scheduledDate: Date
   ): Promise<string | null> {
     try {
-      // In a real app, you'd use NLP to parse the time from noteText
-      // For demo, use the reminderTime if provided, or schedule for 1 hour from now
-      const scheduledDate = reminderTime
-        ? this.parseReminderTime(reminderTime)
-        : new Date(Date.now() + 60 * 60 * 1000); // 1 hour from now
-
-      return await this.scheduleNotification(
-        'Reminder',
+      const notificationId = await this.scheduleNotification(
+        '⏰ Reminder',
         noteText,
         scheduledDate
       );
+
+      return notificationId;
     } catch (error) {
-      console.error('Failed to schedule reminder from note:', error);
+      console.error('Failed to schedule reminder:', error);
       return null;
     }
   }
 
   /**
-   * Parse reminder time string to Date
-   * This is a simplified version - in production, use a library like Chrono
+   * Parse reminder time string to Date with comprehensive natural language support
    */
-  parseReminderTime(timeString: string): Date {
-    // Demo parsing - just schedule for 10 seconds from now
-    // In production, implement proper natural language date parsing
+  parseReminderTime(timeString: string): ReminderInfo {
     const now = new Date();
+    const input = timeString.toLowerCase().trim();
+    let targetDate = new Date(now);
+    let displayText = '';
+    let isValid = true;
 
-    // Simple parsing for common patterns
-    if (timeString.toLowerCase().includes('tomorrow')) {
-      const tomorrow = new Date(now);
-      tomorrow.setDate(tomorrow.getDate() + 1);
-      tomorrow.setHours(9, 0, 0, 0); // 9 AM tomorrow
-      return tomorrow;
+    // Extract time if present (e.g., "3pm", "3:30 PM", "15:00")
+    const extractTime = (str: string): { hours: number; minutes: number } | null => {
+      // Match patterns like "3pm", "3:30pm", "3 pm", "15:00"
+      const timePatterns = [
+        /(\d{1,2}):(\d{2})\s*(am|pm)/i,    // 3:30pm, 3:30 pm
+        /(\d{1,2})\s*(am|pm)/i,             // 3pm, 3 pm
+        /(\d{1,2}):(\d{2})/,                // 15:00, 3:30
+      ];
+
+      for (const pattern of timePatterns) {
+        const match = str.match(pattern);
+        if (match) {
+          let hours = parseInt(match[1]);
+          const minutes = match[2] ? parseInt(match[2]) : 0;
+          const period = match[3]?.toLowerCase();
+
+          if (period === 'pm' && hours < 12) hours += 12;
+          if (period === 'am' && hours === 12) hours = 0;
+
+          return { hours, minutes };
+        }
+      }
+      return null;
+    };
+
+    // Get the extracted time or default to 9 AM
+    const time = extractTime(input) || { hours: 9, minutes: 0 };
+
+    // Day of week mapping
+    const daysOfWeek: { [key: string]: number } = {
+      sunday: 0, sun: 0,
+      monday: 1, mon: 1,
+      tuesday: 2, tue: 2, tues: 2,
+      wednesday: 3, wed: 3,
+      thursday: 4, thu: 4, thurs: 4,
+      friday: 5, fri: 5,
+      saturday: 6, sat: 6,
+    };
+
+    // Parse relative days
+    if (input.includes('today')) {
+      // Keep current date
+      displayText = 'Today';
+    } else if (input.includes('tonight')) {
+      time.hours = time.hours < 18 ? 20 : time.hours; // Default to 8pm for "tonight"
+      displayText = 'Tonight';
+    } else if (input.includes('tomorrow')) {
+      targetDate.setDate(targetDate.getDate() + 1);
+      displayText = 'Tomorrow';
+    } else if (input.includes('next week')) {
+      targetDate.setDate(targetDate.getDate() + 7);
+      displayText = 'Next week';
+    } else if (input.includes('in an hour') || input.includes('in 1 hour')) {
+      targetDate = new Date(now.getTime() + 60 * 60 * 1000);
+      displayText = 'In 1 hour';
+      // Don't override time for relative hours
+      return { date: targetDate, displayText, isValid: true };
+    } else if (input.includes('in 30 minutes') || input.includes('in half an hour')) {
+      targetDate = new Date(now.getTime() + 30 * 60 * 1000);
+      displayText = 'In 30 minutes';
+      return { date: targetDate, displayText, isValid: true };
+    } else if (input.match(/in (\d+) hours?/)) {
+      const match = input.match(/in (\d+) hours?/);
+      if (match) {
+        const hours = parseInt(match[1]);
+        targetDate = new Date(now.getTime() + hours * 60 * 60 * 1000);
+        displayText = `In ${hours} hour${hours > 1 ? 's' : ''}`;
+        return { date: targetDate, displayText, isValid: true };
+      }
+    } else if (input.match(/in (\d+) minutes?/)) {
+      const match = input.match(/in (\d+) minutes?/);
+      if (match) {
+        const minutes = parseInt(match[1]);
+        targetDate = new Date(now.getTime() + minutes * 60 * 1000);
+        displayText = `In ${minutes} minute${minutes > 1 ? 's' : ''}`;
+        return { date: targetDate, displayText, isValid: true };
+      }
+    } else if (input.includes('this weekend')) {
+      // Find next Saturday
+      const daysUntilSaturday = (6 - now.getDay() + 7) % 7 || 7;
+      targetDate.setDate(targetDate.getDate() + daysUntilSaturday);
+      displayText = 'This weekend';
+    } else if (input.includes('next')) {
+      // Check for "next monday", "next tuesday", etc.
+      for (const [day, dayNum] of Object.entries(daysOfWeek)) {
+        if (input.includes(`next ${day}`)) {
+          let daysUntil = (dayNum - now.getDay() + 7) % 7;
+          if (daysUntil === 0) daysUntil = 7;
+          daysUntil += 7; // Add another week for "next"
+          targetDate.setDate(targetDate.getDate() + daysUntil);
+          displayText = `Next ${day.charAt(0).toUpperCase() + day.slice(1)}`;
+          break;
+        }
+      }
+    } else {
+      // Check for day of week without "next"
+      for (const [day, dayNum] of Object.entries(daysOfWeek)) {
+        if (input.includes(day)) {
+          let daysUntil = (dayNum - now.getDay() + 7) % 7;
+          if (daysUntil === 0) daysUntil = 7; // If today, go to next week
+          targetDate.setDate(targetDate.getDate() + daysUntil);
+          displayText = day.charAt(0).toUpperCase() + day.slice(1);
+          break;
+        }
+      }
     }
 
-    if (timeString.toLowerCase().includes('thursday')) {
-      const thursday = new Date(now);
-      const daysUntilThursday = (4 - now.getDay() + 7) % 7 || 7;
-      thursday.setDate(thursday.getDate() + daysUntilThursday);
-      thursday.setHours(9, 0, 0, 0); // 9 AM Thursday
-      return thursday;
+    // If no date pattern matched, default to tomorrow
+    if (!displayText) {
+      targetDate.setDate(targetDate.getDate() + 1);
+      displayText = 'Tomorrow';
+      isValid = false; // Mark as not a precise match
     }
 
-    // Default: 1 hour from now
-    return new Date(now.getTime() + 60 * 60 * 1000);
+    // Set the time
+    targetDate.setHours(time.hours, time.minutes, 0, 0);
+
+    // Format display text with time
+    const timeStr = targetDate.toLocaleTimeString('en-US', {
+      hour: 'numeric',
+      minute: time.minutes > 0 ? '2-digit' : undefined,
+      hour12: true,
+    });
+    displayText = `${displayText} at ${timeStr}`;
+
+    // If the time is in the past, move to the next occurrence
+    if (targetDate <= now) {
+      if (input.includes('today') || input.includes('tonight')) {
+        // If today but time passed, move to tomorrow
+        targetDate.setDate(targetDate.getDate() + 1);
+        displayText = displayText.replace('Today', 'Tomorrow').replace('Tonight', 'Tomorrow');
+      }
+    }
+
+    return { date: targetDate, displayText, isValid };
+  }
+
+  /**
+   * Format a Date to a user-friendly display string
+   */
+  formatReminderDisplay(date: Date): string {
+    const now = new Date();
+    const tomorrow = new Date(now);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+
+    const isToday = date.toDateString() === now.toDateString();
+    const isTomorrow = date.toDateString() === tomorrow.toDateString();
+
+    const timeStr = date.toLocaleTimeString('en-US', {
+      hour: 'numeric',
+      minute: date.getMinutes() > 0 ? '2-digit' : undefined,
+      hour12: true,
+    });
+
+    if (isToday) {
+      return `Today at ${timeStr}`;
+    } else if (isTomorrow) {
+      return `Tomorrow at ${timeStr}`;
+    } else {
+      const dayStr = date.toLocaleDateString('en-US', { weekday: 'long' });
+      return `${dayStr} at ${timeStr}`;
+    }
   }
 
   /**

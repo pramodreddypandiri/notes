@@ -3,12 +3,13 @@
  *
  * Features:
  * - Shows transcribed text for review/editing
+ * - Option to manually set reminder time
  * - Save, re-record, or edit options
- * - Animated modal appearance
+ * - Smooth animated modal appearance
  * - Dark mode support
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -28,13 +29,16 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import AnimatedPressable from '../ui/AnimatedPressable';
 import PremiumButton from '../ui/PremiumButton';
+import ReminderPicker from './ReminderPicker';
+import notificationService from '../../services/notificationService';
+import { EMPTY_TRANSCRIPTION_PLACEHOLDER } from '../../services/voiceService';
 import { colors, typography, spacing, borderRadius, shadows, getThemedColors } from '../../theme';
 
 interface TranscriptionReviewProps {
   visible: boolean;
   transcription: string;
   isProcessing: boolean;
-  onSave: (text: string) => void;
+  onSave: (text: string, reminderDate?: Date) => void;
   onReRecord: () => void;
   onCancel: () => void;
   themedColors: ReturnType<typeof getThemedColors>;
@@ -51,17 +55,31 @@ export function TranscriptionReview({
 }: TranscriptionReviewProps) {
   const [editedText, setEditedText] = useState(transcription);
   const [isEditing, setIsEditing] = useState(false);
+  const [showReminderPicker, setShowReminderPicker] = useState(false);
+  const [customReminderDate, setCustomReminderDate] = useState<Date | null>(null);
+
+  // Check if this is an empty recording
+  const isEmptyRecording = transcription === EMPTY_TRANSCRIPTION_PLACEHOLDER;
 
   // Update edited text when transcription changes
   useEffect(() => {
-    setEditedText(transcription);
+    // Don't set the placeholder as editable text
+    setEditedText(isEmptyRecording ? '' : transcription);
     setIsEditing(false);
-  }, [transcription]);
+    setCustomReminderDate(null);
+  }, [transcription, isEmptyRecording]);
+
+  // Get the active reminder display (only custom - auto-detection happens after saving)
+  const activeReminder = customReminderDate ? {
+    date: customReminderDate,
+    displayText: notificationService.formatReminderDisplay(customReminderDate),
+    isValid: true,
+  } : null;
 
   const handleSave = () => {
     if (editedText.trim().length > 0) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      onSave(editedText.trim());
+      onSave(editedText.trim(), activeReminder?.date);
     }
   };
 
@@ -75,132 +93,230 @@ export function TranscriptionReview({
     onCancel();
   };
 
+  const handleReminderPress = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setShowReminderPicker(true);
+  };
+
+  const handleReminderSelect = (date: Date) => {
+    // Update both states together
+    setCustomReminderDate(date);
+    setShowReminderPicker(false);
+  };
+
+  const handleRemoveReminder = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setCustomReminderDate(null);
+  };
+
   if (!visible) return null;
 
   return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="none"
-      statusBarTranslucent
-    >
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={styles.modalContainer}
+    <>
+      <Modal
+        visible={visible && !showReminderPicker}
+        transparent
+        animationType="none"
+        statusBarTranslucent
+        onRequestClose={handleCancel}
       >
-        {/* Backdrop */}
-        <Animated.View
-          entering={FadeIn.duration(200)}
-          exiting={FadeOut.duration(150)}
-          style={styles.backdrop}
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={styles.modalContainer}
         >
-          <AnimatedPressable
-            onPress={handleCancel}
-            style={StyleSheet.absoluteFill}
-            hapticType="light"
+          {/* Backdrop */}
+          <Animated.View
+            entering={FadeIn.duration(200)}
+            exiting={FadeOut.duration(150)}
+            style={styles.backdrop}
           >
-            <View style={StyleSheet.absoluteFill} />
-          </AnimatedPressable>
-        </Animated.View>
-
-        {/* Content */}
-        <Animated.View
-          entering={SlideInDown.springify().damping(20)}
-          exiting={SlideOutDown.duration(200)}
-          style={[
-            styles.content,
-            {
-              backgroundColor: themedColors.surface.primary,
-            },
-          ]}
-        >
-          {/* Header */}
-          <View style={styles.header}>
-            <Text style={[styles.title, { color: themedColors.text.primary }]}>
-              {isProcessing ? 'Processing...' : 'Review Your Note'}
-            </Text>
             <AnimatedPressable
               onPress={handleCancel}
-              style={[styles.closeButton, { backgroundColor: themedColors.surface.secondary }]}
+              style={StyleSheet.absoluteFill}
               hapticType="light"
             >
-              <Ionicons name="close" size={20} color={themedColors.text.tertiary} />
+              <View style={StyleSheet.absoluteFill} />
             </AnimatedPressable>
-          </View>
+          </Animated.View>
 
-          {isProcessing ? (
-            // Processing state
-            <View style={styles.processingContainer}>
-              <View style={styles.processingIcon}>
-                <Ionicons name="sync" size={32} color={colors.primary[500]} />
-              </View>
-              <Text style={[styles.processingText, { color: themedColors.text.secondary }]}>
-                Transcribing your voice note...
+          {/* Content */}
+          <Animated.View
+            entering={SlideInDown.duration(350).damping(0.8)}
+            exiting={SlideOutDown.duration(250)}
+            style={[
+              styles.content,
+              {
+                backgroundColor: themedColors.surface.primary,
+              },
+            ]}
+          >
+            {/* Header */}
+            <View style={styles.header}>
+              <Text style={[styles.title, { color: themedColors.text.primary }]}>
+                {isProcessing ? 'Processing...' : 'Review Your Note'}
               </Text>
-            </View>
-          ) : (
-            <>
-              {/* Transcription display/edit */}
-              <View
-                style={[
-                  styles.transcriptionContainer,
-                  {
-                    backgroundColor: themedColors.input.background,
-                    borderColor: isEditing ? colors.primary[500] : themedColors.input.border,
-                  },
-                ]}
+              <AnimatedPressable
+                onPress={handleCancel}
+                style={[styles.closeButton, { backgroundColor: themedColors.surface.secondary }]}
+                hapticType="light"
               >
-                <TextInput
-                  style={[styles.transcriptionText, { color: themedColors.text.primary }]}
-                  value={editedText}
-                  onChangeText={setEditedText}
-                  onFocus={() => setIsEditing(true)}
-                  onBlur={() => setIsEditing(false)}
-                  multiline
-                  placeholder="Your transcribed note will appear here..."
-                  placeholderTextColor={themedColors.input.placeholder}
-                />
+                <Ionicons name="close" size={20} color={themedColors.text.tertiary} />
+              </AnimatedPressable>
+            </View>
+
+            {isProcessing ? (
+              // Processing state
+              <View style={styles.processingContainer}>
+                <View style={styles.processingIcon}>
+                  <Ionicons name="sync" size={32} color={colors.primary[500]} />
+                </View>
+                <Text style={[styles.processingText, { color: themedColors.text.secondary }]}>
+                  Transcribing your voice note...
+                </Text>
               </View>
+            ) : isEmptyRecording ? (
+              // Empty recording state
+              <View style={styles.emptyRecordingContainer}>
+                <View style={[styles.emptyRecordingIcon, { backgroundColor: themedColors.surface.secondary }]}>
+                  <Ionicons name="mic-off-outline" size={40} color={themedColors.text.tertiary} />
+                </View>
+                <Text style={[styles.emptyRecordingTitle, { color: themedColors.text.primary }]}>
+                  Nothing recorded
+                </Text>
+                <Text style={[styles.emptyRecordingSubtitle, { color: themedColors.text.tertiary }]}>
+                  We couldn't detect any speech in your recording. Please try again and speak clearly.
+                </Text>
 
-              {/* Edit hint */}
-              <Text style={[styles.hint, { color: themedColors.text.tertiary }]}>
-                Tap to edit the transcription before saving
-              </Text>
-
-              {/* Action buttons */}
-              <View style={styles.actions}>
-                {/* Re-record button */}
-                <AnimatedPressable
-                  onPress={handleReRecord}
-                  style={[
-                    styles.secondaryButton,
-                    { backgroundColor: themedColors.surface.secondary },
-                  ]}
-                  hapticType="medium"
-                >
-                  <Ionicons name="mic-outline" size={20} color={colors.primary[500]} />
-                  <Text style={[styles.secondaryButtonText, { color: colors.primary[500] }]}>
-                    Re-record
-                  </Text>
-                </AnimatedPressable>
-
-                {/* Save button */}
-                <View style={styles.saveButtonContainer}>
+                {/* Re-record button for empty state */}
+                <View style={styles.emptyRecordingActions}>
                   <PremiumButton
-                    onPress={handleSave}
+                    onPress={handleReRecord}
                     gradient
-                    disabled={editedText.trim().length === 0}
-                    icon={<Ionicons name="checkmark" size={20} color={colors.neutral[0]} />}
+                    icon={<Ionicons name="mic-outline" size={20} color={colors.neutral[0]} />}
                   >
-                    Save Note
+                    Try Again
                   </PremiumButton>
                 </View>
               </View>
-            </>
-          )}
-        </Animated.View>
-      </KeyboardAvoidingView>
-    </Modal>
+            ) : (
+              <>
+                {/* Transcription display/edit */}
+                <View
+                  style={[
+                    styles.transcriptionContainer,
+                    {
+                      backgroundColor: themedColors.input.background,
+                      borderColor: isEditing ? colors.primary[500] : themedColors.input.border,
+                    },
+                  ]}
+                >
+                  <TextInput
+                    style={[styles.transcriptionText, { color: themedColors.text.primary }]}
+                    value={editedText}
+                    onChangeText={setEditedText}
+                    onFocus={() => setIsEditing(true)}
+                    onBlur={() => setIsEditing(false)}
+                    multiline
+                    placeholder="Your transcribed note will appear here..."
+                    placeholderTextColor={themedColors.input.placeholder}
+                  />
+                </View>
+
+                {/* Edit hint */}
+                <Text style={[styles.hint, { color: themedColors.text.tertiary }]}>
+                  Tap to edit the transcription before saving
+                </Text>
+
+                {/* Reminder Section - only shows custom reminder set by user */}
+                {activeReminder ? (
+                  // Custom reminder set by user
+                  <View style={[styles.reminderSection, { backgroundColor: colors.accent.rose.light }]}>
+                    <View style={styles.reminderContent}>
+                      <Ionicons name="notifications" size={20} color={colors.accent.rose.base} />
+                      <View style={styles.reminderTextContainer}>
+                        <Text style={styles.reminderLabel}>Reminder</Text>
+                        <Text style={[styles.reminderTime, { color: colors.accent.rose.dark }]}>
+                          {activeReminder.displayText}
+                        </Text>
+                      </View>
+                    </View>
+                    <View style={styles.reminderActions}>
+                      <AnimatedPressable
+                        onPress={handleReminderPress}
+                        style={styles.reminderEditButton}
+                        hapticType="light"
+                      >
+                        <Ionicons name="pencil" size={16} color={colors.accent.rose.base} />
+                      </AnimatedPressable>
+                      <AnimatedPressable
+                        onPress={handleRemoveReminder}
+                        style={styles.reminderRemoveButton}
+                        hapticType="light"
+                      >
+                        <Ionicons name="close-circle" size={20} color={colors.accent.rose.base} />
+                      </AnimatedPressable>
+                    </View>
+                  </View>
+                ) : (
+                  // Add reminder option
+                  <AnimatedPressable
+                    onPress={handleReminderPress}
+                    style={[styles.addReminderButton, { backgroundColor: themedColors.surface.secondary }]}
+                    hapticType="light"
+                  >
+                    <Ionicons name="notifications-outline" size={20} color={colors.primary[500]} />
+                    <Text style={[styles.addReminderText, { color: colors.primary[500] }]}>
+                      Add reminder
+                    </Text>
+                  </AnimatedPressable>
+                )}
+
+                {/* Action buttons */}
+                <View style={styles.actions}>
+                  {/* Re-record button */}
+                  <AnimatedPressable
+                    onPress={handleReRecord}
+                    style={[
+                      styles.secondaryButton,
+                      { backgroundColor: themedColors.surface.secondary },
+                    ]}
+                    hapticType="medium"
+                  >
+                    <Ionicons name="mic-outline" size={20} color={colors.primary[500]} />
+                    <Text style={[styles.secondaryButtonText, { color: colors.primary[500] }]}>
+                      Re-record
+                    </Text>
+                  </AnimatedPressable>
+
+                  {/* Save button */}
+                  <View style={styles.saveButtonContainer}>
+                    <PremiumButton
+                      onPress={handleSave}
+                      gradient
+                      disabled={editedText.trim().length === 0}
+                      icon={<Ionicons name="checkmark" size={20} color={colors.neutral[0]} />}
+                    >
+                      {activeReminder ? 'Save with Reminder' : 'Save Note'}
+                    </PremiumButton>
+                  </View>
+                </View>
+              </>
+            )}
+          </Animated.View>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      {/* Reminder Picker Modal - rendered separately to avoid nested modal issues */}
+      {showReminderPicker && (
+        <ReminderPicker
+          visible={showReminderPicker}
+          onClose={() => setShowReminderPicker(false)}
+          onSelectReminder={handleReminderSelect}
+          themedColors={themedColors}
+          initialDate={activeReminder?.date}
+        />
+      )}
+    </>
   );
 }
 
@@ -241,8 +357,8 @@ const styles = StyleSheet.create({
     borderRadius: borderRadius.lg,
     borderWidth: 1.5,
     padding: spacing[4],
-    minHeight: 120,
-    maxHeight: 200,
+    minHeight: 100,
+    maxHeight: 150,
   },
   transcriptionText: {
     fontSize: typography.fontSize.base,
@@ -251,7 +367,67 @@ const styles = StyleSheet.create({
   hint: {
     fontSize: typography.fontSize.sm,
     marginTop: spacing[2],
-    marginBottom: spacing[5],
+    marginBottom: spacing[4],
+  },
+  reminderSection: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: spacing[3],
+    borderRadius: borderRadius.lg,
+    marginBottom: spacing[4],
+  },
+  reminderContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing[3],
+    flex: 1,
+  },
+  reminderTextContainer: {
+    flex: 1,
+  },
+  reminderLabel: {
+    fontSize: typography.fontSize.xs,
+    fontWeight: typography.fontWeight.medium,
+    color: colors.accent.rose.dark,
+    opacity: 0.7,
+    marginBottom: 2,
+  },
+  reminderTime: {
+    fontSize: typography.fontSize.sm,
+    fontWeight: typography.fontWeight.semibold,
+  },
+  reminderActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing[2],
+  },
+  reminderEditButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: 'rgba(255,255,255,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  reminderRemoveButton: {
+    width: 32,
+    height: 32,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  addReminderButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing[2],
+    paddingVertical: spacing[3],
+    borderRadius: borderRadius.lg,
+    marginBottom: spacing[4],
+  },
+  addReminderText: {
+    fontSize: typography.fontSize.sm,
+    fontWeight: typography.fontWeight.medium,
   },
   actions: {
     flexDirection: 'row',
@@ -288,6 +464,35 @@ const styles = StyleSheet.create({
   },
   processingText: {
     fontSize: typography.fontSize.base,
+  },
+  emptyRecordingContainer: {
+    alignItems: 'center',
+    paddingVertical: spacing[8],
+    paddingHorizontal: spacing[4],
+  },
+  emptyRecordingIcon: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: spacing[4],
+  },
+  emptyRecordingTitle: {
+    fontSize: typography.fontSize.lg,
+    fontWeight: typography.fontWeight.semibold,
+    marginBottom: spacing[2],
+    textAlign: 'center',
+  },
+  emptyRecordingSubtitle: {
+    fontSize: typography.fontSize.sm,
+    textAlign: 'center',
+    lineHeight: typography.fontSize.sm * typography.lineHeight.relaxed,
+    marginBottom: spacing[6],
+  },
+  emptyRecordingActions: {
+    width: '100%',
+    maxWidth: 200,
   },
 });
 

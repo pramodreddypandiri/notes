@@ -4,18 +4,20 @@
  * Features:
  * - Text input on the left, mic button on the right
  * - Hold microphone to record (like WhatsApp)
+ * - Slide left to cancel recording
  * - Send button appears when text is entered
  * - Positioned above tabs, not overlapping
  * - Dark mode support
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   TextInput,
   StyleSheet,
   Platform,
   Keyboard,
+  GestureResponderEvent,
 } from 'react-native';
 import Animated, {
   useAnimatedStyle,
@@ -24,13 +26,9 @@ import Animated, {
   withTiming,
   withRepeat,
   withSequence,
-  runOnJS,
   Easing,
   interpolateColor,
-  FadeIn,
-  FadeOut,
 } from 'react-native-reanimated';
-import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { colors, typography, spacing, borderRadius, shadows, layout, animation, getThemedColors } from '../../theme';
@@ -44,6 +42,8 @@ interface NoteInputBarProps {
   recordingDuration: number;
   themedColors: ReturnType<typeof getThemedColors>;
   disabled?: boolean;
+  /** When true, recording was started programmatically (e.g., Re-record) and needs tap-to-stop */
+  externalRecordingStart?: boolean;
 }
 
 export function NoteInputBar({
@@ -55,9 +55,17 @@ export function NoteInputBar({
   recordingDuration,
   themedColors,
   disabled = false,
+  externalRecordingStart = false,
 }: NoteInputBarProps) {
   const [text, setText] = useState('');
   const [keyboardHeight, setKeyboardHeight] = useState(0);
+  const [slideX, setSlideX] = useState(0);
+  const [isSlidingToCancel, setIsSlidingToCancel] = useState(false);
+
+  // Track if we're currently in a recording gesture
+  const isRecordingGestureRef = useRef(false);
+  const isSlidingToCancelRef = useRef(false);
+  const cancelThreshold = -100; // Pixels to slide left to cancel
 
   // Animation values
   const micScale = useSharedValue(1);
@@ -65,8 +73,78 @@ export function NoteInputBar({
   const pulseScale = useSharedValue(1);
   const pulseOpacity = useSharedValue(0);
   const sendButtonScale = useSharedValue(0);
-  const recordingIndicatorOpacity = useSharedValue(0);
-  const slideX = useSharedValue(0);
+
+  // Track starting X position for slide gesture
+  const startTouchXRef = useRef(0);
+
+  // Touch handlers for hold-to-record and slide-to-cancel
+  const handleTouchStart = (evt: GestureResponderEvent) => {
+    const touch = evt.nativeEvent;
+    startTouchXRef.current = touch.pageX;
+
+    // If already recording (external mode), just track start position for slide
+    if (isRecording && externalRecordingStart) {
+      isRecordingGestureRef.current = true;
+      isSlidingToCancelRef.current = false;
+      return;
+    }
+
+    // Start new recording if text is empty, not disabled, not in external mode, and not already recording
+    if (!disabled && text.trim().length === 0 && !externalRecordingStart && !isRecording) {
+      isRecordingGestureRef.current = true;
+      isSlidingToCancelRef.current = false;
+      micScale.value = withSpring(1.2, animation.spring.snappy);
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+      onRecordingStart();
+    }
+  };
+
+  const handleTouchMove = (evt: GestureResponderEvent) => {
+    if (!isRecording) return;
+
+    const touch = evt.nativeEvent;
+    const dx = touch.pageX - startTouchXRef.current;
+    const newSlideX = Math.min(0, dx); // Only allow sliding left
+    setSlideX(newSlideX);
+
+    // Check if crossed cancel threshold
+    if (newSlideX < cancelThreshold) {
+      if (!isSlidingToCancelRef.current) {
+        isSlidingToCancelRef.current = true;
+        setIsSlidingToCancel(true);
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      }
+    } else {
+      if (isSlidingToCancelRef.current) {
+        isSlidingToCancelRef.current = false;
+        setIsSlidingToCancel(false);
+      }
+    }
+  };
+
+  const handleTouchEnd = (evt: GestureResponderEvent) => {
+    if (!isRecording) return;
+
+    micScale.value = withSpring(1, animation.spring.snappy);
+
+    const touch = evt.nativeEvent;
+    const dx = touch.pageX - startTouchXRef.current;
+    const shouldCancel = isSlidingToCancelRef.current || dx < cancelThreshold;
+
+    if (shouldCancel) {
+      // Cancel recording
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+      onRecordingCancel();
+    } else {
+      // End recording and process
+      onRecordingEnd();
+    }
+
+    setSlideX(0);
+    setIsSlidingToCancel(false);
+    isSlidingToCancelRef.current = false;
+    isRecordingGestureRef.current = false;
+  };
 
   // Keyboard listeners
   useEffect(() => {
@@ -98,7 +176,10 @@ export function NoteInputBar({
   useEffect(() => {
     if (isRecording) {
       micColorProgress.value = withTiming(1, { duration: 200 });
-      recordingIndicatorOpacity.value = withTiming(1, { duration: 200 });
+      if (!isRecordingGestureRef.current) {
+        // Only animate scale if not from gesture (gesture handles its own scale)
+        micScale.value = withSpring(1.1, animation.spring.snappy);
+      }
 
       // Pulsing effect
       pulseScale.value = withRepeat(
@@ -119,9 +200,11 @@ export function NoteInputBar({
       );
     } else {
       micColorProgress.value = withTiming(0, { duration: 200 });
-      recordingIndicatorOpacity.value = withTiming(0, { duration: 200 });
+      micScale.value = withSpring(1, animation.spring.snappy);
       pulseScale.value = withTiming(1, { duration: 200 });
       pulseOpacity.value = withTiming(0, { duration: 200 });
+      setSlideX(0);
+      setIsSlidingToCancel(false);
     }
   }, [isRecording]);
 
@@ -140,42 +223,13 @@ export function NoteInputBar({
     }
   };
 
-  // Long press gesture for recording
-  const longPressGesture = Gesture.LongPress()
-    .minDuration(200)
-    .enabled(!disabled && text.trim().length === 0)
-    .onStart(() => {
-      'worklet';
-      micScale.value = withSpring(1.2, animation.spring.snappy);
-      runOnJS(Haptics.impactAsync)(Haptics.ImpactFeedbackStyle.Heavy);
-      runOnJS(onRecordingStart)();
-    })
-    .onEnd(() => {
-      'worklet';
-      micScale.value = withSpring(1, animation.spring.snappy);
-      runOnJS(onRecordingEnd)();
-    });
-
-  // Pan gesture for cancel (slide left to cancel like WhatsApp)
-  const panGesture = Gesture.Pan()
-    .enabled(isRecording)
-    .onUpdate((event) => {
-      'worklet';
-      if (event.translationX < 0) {
-        slideX.value = event.translationX;
-      }
-    })
-    .onEnd((event) => {
-      'worklet';
-      if (event.translationX < -100) {
-        // Cancel recording
-        runOnJS(onRecordingCancel)();
-        runOnJS(Haptics.notificationAsync)(Haptics.NotificationFeedbackType.Warning);
-      }
-      slideX.value = withSpring(0, animation.spring.snappy);
-    });
-
-  const composedGesture = Gesture.Simultaneous(longPressGesture, panGesture);
+  // Handle tap on mic button for external recording mode (tap-to-stop)
+  const handleExternalRecordingStop = () => {
+    if (isRecording && externalRecordingStart) {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      onRecordingEnd();
+    }
+  };
 
   // Animated styles
   const animatedMicStyle = useAnimatedStyle(() => ({
@@ -198,11 +252,6 @@ export function NoteInputBar({
     opacity: sendButtonScale.value,
   }));
 
-  const animatedRecordingStyle = useAnimatedStyle(() => ({
-    opacity: recordingIndicatorOpacity.value,
-    transform: [{ translateX: slideX.value }],
-  }));
-
   const showSendButton = text.trim().length > 0;
 
   return (
@@ -217,22 +266,41 @@ export function NoteInputBar({
       ]}
     >
       {isRecording ? (
-        // Recording mode
-        <Animated.View style={[styles.recordingContainer, animatedRecordingStyle]}>
+        // Recording mode - show recording indicator with slide hint
+        <View style={[styles.recordingContainer, { transform: [{ translateX: slideX }] }]}>
           <View style={styles.recordingIndicator}>
-            <View style={styles.recordingDot} />
+            <View style={[styles.recordingDot, isSlidingToCancel && styles.recordingDotCancel]} />
             <Animated.Text style={[styles.recordingTime, { color: themedColors.text.primary }]}>
               {formatDuration(recordingDuration)}
             </Animated.Text>
           </View>
 
           <View style={styles.slideHint}>
-            <Ionicons name="chevron-back" size={16} color={themedColors.text.tertiary} />
-            <Animated.Text style={[styles.slideHintText, { color: themedColors.text.tertiary }]}>
-              Slide to cancel
+            <Ionicons
+              name="chevron-back"
+              size={16}
+              color={isSlidingToCancel ? colors.semantic.error : themedColors.text.tertiary}
+            />
+            <Animated.Text
+              style={[
+                styles.slideHintText,
+                { color: isSlidingToCancel ? colors.semantic.error : themedColors.text.tertiary }
+              ]}
+            >
+              {isSlidingToCancel ? 'Release to cancel' : 'Slide to cancel'}
             </Animated.Text>
+            {externalRecordingStart && !isSlidingToCancel && (
+              <>
+                <Animated.Text style={[styles.slideHintDivider, { color: themedColors.text.tertiary }]}>
+                  •
+                </Animated.Text>
+                <Animated.Text style={[styles.slideHintText, { color: themedColors.text.tertiary }]}>
+                  Tap to finish
+                </Animated.Text>
+              </>
+            )}
           </View>
-        </Animated.View>
+        </View>
       ) : (
         // Text input mode
         <View
@@ -262,34 +330,53 @@ export function NoteInputBar({
         {showSendButton && !isRecording ? (
           // Send button
           <Animated.View style={animatedSendStyle}>
-            <GestureDetector
-              gesture={Gesture.Tap().onEnd(() => {
-                'worklet';
-                runOnJS(handleSendText)();
-              })}
+            <View
+              style={[styles.actionButton, { backgroundColor: colors.primary[500] }]}
+              onTouchEnd={handleSendText}
             >
-              <View style={[styles.actionButton, { backgroundColor: colors.primary[500] }]}>
-                <Ionicons name="send" size={20} color={colors.neutral[0]} />
-              </View>
-            </GestureDetector>
-          </Animated.View>
-        ) : (
-          // Mic button with long press
-          <GestureDetector gesture={composedGesture}>
-            <View style={styles.micWrapper}>
-              {/* Pulse ring */}
-              <Animated.View style={[styles.pulseRing, animatedPulseStyle]} />
-
-              {/* Mic button */}
-              <Animated.View style={[styles.actionButton, animatedMicStyle]}>
-                <Ionicons
-                  name={isRecording ? 'mic' : 'mic-outline'}
-                  size={22}
-                  color={colors.neutral[0]}
-                />
-              </Animated.View>
+              <Ionicons name="send" size={20} color={colors.neutral[0]} />
             </View>
-          </GestureDetector>
+          </Animated.View>
+        ) : isRecording ? (
+          // Recording in progress - supports both tap-to-stop AND slide-to-cancel
+          <View
+            style={styles.micWrapper}
+            onTouchStart={handleTouchStart}
+            onTouchMove={handleTouchMove}
+            onTouchEnd={handleTouchEnd}
+          >
+            {/* Pulse ring */}
+            <Animated.View style={[styles.pulseRing, animatedPulseStyle]} />
+
+            {/* Stop button */}
+            <Animated.View style={[styles.actionButton, animatedMicStyle]}>
+              <Ionicons
+                name="stop"
+                size={22}
+                color={colors.neutral[0]}
+              />
+            </Animated.View>
+          </View>
+        ) : (
+          // Mic button with touch handlers for hold-to-record and slide-to-cancel
+          <View
+            style={styles.micWrapper}
+            onTouchStart={handleTouchStart}
+            onTouchMove={handleTouchMove}
+            onTouchEnd={handleTouchEnd}
+          >
+            {/* Pulse ring */}
+            <Animated.View style={[styles.pulseRing, animatedPulseStyle]} />
+
+            {/* Mic button */}
+            <Animated.View style={[styles.actionButton, animatedMicStyle]}>
+              <Ionicons
+                name={isRecording ? 'stop' : 'mic-outline'}
+                size={22}
+                color={colors.neutral[0]}
+              />
+            </Animated.View>
+          </View>
         )}
       </View>
     </View>
@@ -305,6 +392,7 @@ const styles = StyleSheet.create({
     paddingBottom: spacing[3],
     borderTopWidth: 1,
     gap: spacing[2],
+    position: 'relative',
   },
   inputContainer: {
     flex: 1,
@@ -369,6 +457,9 @@ const styles = StyleSheet.create({
     borderRadius: 5,
     backgroundColor: colors.semantic.error,
   },
+  recordingDotCancel: {
+    backgroundColor: colors.neutral[400],
+  },
   recordingTime: {
     fontSize: typography.fontSize.md,
     fontWeight: typography.fontWeight.semibold,
@@ -381,6 +472,10 @@ const styles = StyleSheet.create({
   },
   slideHintText: {
     fontSize: typography.fontSize.sm,
+  },
+  slideHintDivider: {
+    fontSize: typography.fontSize.sm,
+    marginHorizontal: spacing[1],
   },
 });
 
