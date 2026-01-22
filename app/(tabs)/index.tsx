@@ -44,7 +44,7 @@ import TopBar from '../../components/common/TopBar';
 
 // Services
 import voiceService, { isGarbageTranscription, EMPTY_TRANSCRIPTION_PLACEHOLDER } from '../../services/voiceService';
-import { createNoteWithReminder, getNotes, updateNoteTags } from '../../services/notesService';
+import { createNoteWithReminder, getNotes, updateNoteTags, deleteNote } from '../../services/notesService';
 import soundService from '../../services/soundService';
 import notificationService from '../../services/notificationService';
 
@@ -348,9 +348,22 @@ export default function HomeScreen() {
       {
         text: 'Delete',
         style: 'destructive',
-        onPress: () => {
+        onPress: async () => {
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+          // Optimistically remove from UI
           setNotes(notes.filter((note) => note.id !== noteId));
+
+          // Actually delete from database
+          if (!DEMO_MODE) {
+            try {
+              await deleteNote(noteId);
+            } catch (error) {
+              console.error('Failed to delete note:', error);
+              // Reload notes if delete failed
+              await loadNotes();
+              Alert.alert('Error', 'Failed to delete note. Please try again.');
+            }
+          }
         },
       },
     ]);

@@ -18,22 +18,45 @@ const hasReminderIntent = (transcript: string): boolean => {
   return REMINDER_KEYWORDS.some(keyword => lower.includes(keyword));
 };
 
-// Determine appropriate tags based on parsed data
+// Auto-detect if a note should be a reminder using local parsing (no AI needed)
+const autoDetectReminder = (transcript: string): { isReminder: boolean; timeExtraction: ReturnType<typeof notificationService.extractTimeFromText> } => {
+  const hasIntent = hasReminderIntent(transcript);
+  const timeExtraction = notificationService.extractTimeFromText(transcript);
+
+  // It's a reminder if:
+  // 1. Has reminder intent keywords AND has a time reference
+  // 2. OR has strong reminder keywords (remind, reminder, don't forget) regardless of time
+  const strongReminderKeywords = ['remind', 'reminder', 'don\'t forget', 'dont forget'];
+  const hasStrongIntent = strongReminderKeywords.some(kw => transcript.toLowerCase().includes(kw));
+
+  const isReminder = (hasIntent && timeExtraction.hasTime) || hasStrongIntent;
+
+  return { isReminder, timeExtraction };
+};
+
+// Determine appropriate tags based on transcript (local detection) and optional AI parsed data
 const determineTags = (
-  parsedData: any,
-  transcript: string
+  transcript: string,
+  parsedData?: any
 ): string[] => {
   const tags: string[] = [];
 
-  // If time is mentioned and has reminder intent, tag as reminder
-  if (parsedData.time && hasReminderIntent(transcript)) {
+  // PRIMARY: Use local auto-detection (no AI needed)
+  const { isReminder } = autoDetectReminder(transcript);
+  if (isReminder) {
     tags.push('reminder');
-  } else if (parsedData.type === 'task') {
-    tags.push('reminder');
-  } else if (parsedData.type === 'preference') {
-    tags.push('preference');
-  } else if (parsedData.food || parsedData.activity) {
-    tags.push('my_type');
+    return tags; // Reminder takes priority
+  }
+
+  // SECONDARY: If AI parsed data is available, use it for other tag types
+  if (parsedData) {
+    if (parsedData.type === 'task') {
+      tags.push('reminder');
+    } else if (parsedData.type === 'preference') {
+      tags.push('preference');
+    } else if (parsedData.food || parsedData.activity) {
+      tags.push('my_type');
+    }
   }
 
   return tags;
@@ -74,8 +97,8 @@ export const createNoteWithReminder = async (
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) throw new Error('Not authenticated');
 
-    // Determine tags
-    const tags = determineTags(parsedData, transcript);
+    // Determine tags (local detection is primary, AI parsed data is secondary)
+    const tags = determineTags(transcript, parsedData);
     const isReminder = forceReminder || tags.includes('reminder');
 
     // Prepare note data
@@ -97,25 +120,43 @@ export const createNoteWithReminder = async (
 
     // Schedule reminder if applicable
     if (isReminder) {
+      const noteDisplayText = parsedData.summary || transcript;
+
       if (customReminderTime && isValidDate(customReminderTime)) {
-        // Use custom time provided by user
+        // PRIORITY 1: Use custom time provided by user (manual selection)
         notificationId = await notificationService.scheduleReminderForDate(
-          parsedData.summary || transcript,
+          noteDisplayText,
           '', // Note ID not available yet
           customReminderTime
         );
         reminderDisplayText = notificationService.formatReminderDisplay(customReminderTime);
         noteData.reminder_time = customReminderTime.toISOString();
-      } else if (parsedData.time) {
-        // Parse time from Claude's extraction
-        const { notificationId: nId, reminderInfo } = await notificationService.scheduleReminderFromNote(
-          parsedData.summary || transcript,
-          parsedData.time
-        );
-        if (reminderInfo.isValid && isValidDate(reminderInfo.date)) {
-          notificationId = nId;
-          reminderDisplayText = reminderInfo.displayText;
-          noteData.reminder_time = reminderInfo.date.toISOString();
+      } else {
+        // PRIORITY 2: Use LOCAL time extraction from transcript (no AI needed)
+        const localTimeExtraction = notificationService.extractTimeFromText(transcript);
+
+        if (localTimeExtraction.hasTime && localTimeExtraction.reminderInfo?.isValid) {
+          const { reminderInfo } = localTimeExtraction;
+          if (isValidDate(reminderInfo.date)) {
+            notificationId = await notificationService.scheduleReminderForDate(
+              noteDisplayText,
+              '',
+              reminderInfo.date
+            );
+            reminderDisplayText = reminderInfo.displayText;
+            noteData.reminder_time = reminderInfo.date.toISOString();
+          }
+        } else if (parsedData.time) {
+          // PRIORITY 3: Fallback to AI-extracted time if local extraction failed
+          const { notificationId: nId, reminderInfo } = await notificationService.scheduleReminderFromNote(
+            noteDisplayText,
+            parsedData.time
+          );
+          if (reminderInfo.isValid && isValidDate(reminderInfo.date)) {
+            notificationId = nId;
+            reminderDisplayText = reminderInfo.displayText;
+            noteData.reminder_time = reminderInfo.date.toISOString();
+          }
         }
       }
 

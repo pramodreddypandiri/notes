@@ -18,6 +18,12 @@ export interface ReminderInfo {
   isValid: boolean;
 }
 
+export interface TimeExtractionResult {
+  hasTime: boolean;
+  timeString: string | null;
+  reminderInfo: ReminderInfo | null;
+}
+
 class NotificationService {
   /**
    * Request notification permissions
@@ -172,6 +178,73 @@ class NotificationService {
       console.error('Failed to schedule reminder:', error);
       return null;
     }
+  }
+
+  /**
+   * Extract time/date information from natural language text (e.g., voice note transcript)
+   * This is the PRIMARY method for auto-detecting reminders without AI
+   */
+  extractTimeFromText(text: string): TimeExtractionResult {
+    const input = text.toLowerCase();
+
+    // Patterns to detect time-related phrases
+    const timePatterns = [
+      // Relative time: "in X minutes/hours"
+      /\bin\s+(\d+)\s*(minutes?|mins?|hours?|hrs?)\b/i,
+      /\bin\s+(an?|one)\s*(hour|minute)\b/i,
+      /\bin\s+(half\s+an?\s+hour|30\s+minutes?)\b/i,
+
+      // Specific times: "at 3pm", "at 3:30", "by 5pm"
+      /\b(at|by|around)\s+(\d{1,2})(:\d{2})?\s*(am|pm)?\b/i,
+      /\b(\d{1,2})(:\d{2})?\s*(am|pm)\b/i,
+
+      // Day references
+      /\b(today|tonight|tomorrow|this\s+evening|this\s+morning|this\s+afternoon)\b/i,
+      /\b(this\s+weekend|next\s+week|next\s+month)\b/i,
+
+      // Day names
+      /\b(next\s+)?(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i,
+      /\b(on\s+)?(mon|tue|tues|wed|thu|thurs|fri|sat|sun)\b/i,
+
+      // Dates: "on the 15th", "on January 5th", "on 1/15"
+      /\b(on\s+)?(the\s+)?(\d{1,2})(st|nd|rd|th)?\b/i,
+      /\b(january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{1,2}\b/i,
+
+      // Time of day without specific time
+      /\b(morning|afternoon|evening|night)\b/i,
+
+      // Deadline phrases
+      /\b(by\s+end\s+of\s+(day|week|month))\b/i,
+      /\b(before|until|due)\s+/i,
+    ];
+
+    // Find matching time pattern
+    let matchedTimeString: string | null = null;
+
+    for (const pattern of timePatterns) {
+      const match = input.match(pattern);
+      if (match) {
+        matchedTimeString = match[0];
+        break;
+      }
+    }
+
+    if (!matchedTimeString) {
+      return {
+        hasTime: false,
+        timeString: null,
+        reminderInfo: null,
+      };
+    }
+
+    // Parse the extracted time string
+    const reminderInfo = this.parseReminderTime(matchedTimeString);
+
+    return {
+      hasTime: true,
+      timeString: matchedTimeString,
+      reminderInfo,
+    };
   }
 
   /**

@@ -98,24 +98,24 @@ const PERSONALITY_QUESTIONS = [
 const SOCIAL_OPTIONS = {
   group_size: {
     title: 'Who do you usually go out with?',
-    subtitle: 'This helps us suggest the right venues',
+    subtitle: 'Select all that apply',
+    multiSelect: true,
     options: [
       { value: 'solo', label: 'Just Me', emoji: '🙋', description: 'Solo adventures' },
       { value: 'couple', label: 'With Partner', emoji: '💑', description: 'Date nights' },
       { value: 'small_group', label: 'Small Group', emoji: '👯', description: '2-4 friends' },
       { value: 'large_group', label: 'Large Group', emoji: '🎊', description: '5+ people' },
-      { value: 'flexible', label: 'It Varies', emoji: '🔄', description: 'Depends on the occasion' },
     ],
   },
   social_context: {
     title: 'What\'s your typical outing vibe?',
-    subtitle: 'We\'ll tailor recommendations to your context',
+    subtitle: 'Select all that apply',
+    multiSelect: true,
     options: [
       { value: 'date_night', label: 'Date Night', emoji: '🌹', description: 'Romantic evenings out' },
       { value: 'friends', label: 'Friend Hangouts', emoji: '🍻', description: 'Casual time with friends' },
       { value: 'family', label: 'Family Time', emoji: '👨‍👩‍👧', description: 'Family-friendly activities' },
       { value: 'solo', label: 'Me Time', emoji: '🎧', description: 'Self-care and solo fun' },
-      { value: 'mixed', label: 'All of the Above', emoji: '🎭', description: 'A bit of everything' },
     ],
   },
 };
@@ -169,8 +169,8 @@ export default function OnboardingFlow() {
     energy_level: 5,
   });
   const [social, setSocial] = useState({
-    preferred_group_size: 'flexible' as string,
-    social_context: 'mixed' as string,
+    preferred_group_size: [] as string[],
+    social_context: [] as string[],
   });
   const [practical, setPractical] = useState({
     budget_sensitivity: 'moderate' as string,
@@ -246,13 +246,18 @@ export default function OnboardingFlow() {
     setIsLoading(true);
     try {
       // Save all profile data
+      // For multi-select fields, join array values or use first value
       await updateUserProfile({
         introvert_extrovert: personality.introvert_extrovert,
         spontaneous_planner: personality.spontaneous_planner,
         adventurous_comfort: personality.adventurous_comfort,
         energy_level: personality.energy_level,
-        preferred_group_size: social.preferred_group_size as any,
-        social_context: social.social_context as any,
+        preferred_group_size: social.preferred_group_size.length > 0
+          ? social.preferred_group_size.join(',')
+          : 'flexible' as any,
+        social_context: social.social_context.length > 0
+          ? social.social_context.join(',')
+          : 'mixed' as any,
         budget_sensitivity: practical.budget_sensitivity as any,
         time_preference: practical.time_preference as any,
         pace_preference: practical.pace_preference as any,
@@ -308,11 +313,16 @@ export default function OnboardingFlow() {
 
       case 'social':
         return (
-          <OptionStep
+          <MultiSelectOptionStep
             key="social"
             config={SOCIAL_OPTIONS.group_size}
-            value={social.preferred_group_size}
-            onSelect={(value) => setSocial(prev => ({ ...prev, preferred_group_size: value }))}
+            values={social.preferred_group_size}
+            onToggle={(value) => setSocial(prev => ({
+              ...prev,
+              preferred_group_size: prev.preferred_group_size.includes(value)
+                ? prev.preferred_group_size.filter(v => v !== value)
+                : [...prev.preferred_group_size, value],
+            }))}
             onNext={handleNext}
             onBack={handleBack}
           />
@@ -320,11 +330,16 @@ export default function OnboardingFlow() {
 
       case 'context':
         return (
-          <OptionStep
+          <MultiSelectOptionStep
             key="context"
             config={SOCIAL_OPTIONS.social_context}
-            value={social.social_context}
-            onSelect={(value) => setSocial(prev => ({ ...prev, social_context: value }))}
+            values={social.social_context}
+            onToggle={(value) => setSocial(prev => ({
+              ...prev,
+              social_context: prev.social_context.includes(value)
+                ? prev.social_context.filter(v => v !== value)
+                : [...prev.social_context, value],
+            }))}
             onNext={handleNext}
             onBack={handleBack}
           />
@@ -516,7 +531,7 @@ function OptionStep({
   onNext,
   onBack,
 }: {
-  config: typeof SOCIAL_OPTIONS.group_size;
+  config: typeof PRACTICAL_OPTIONS.budget;
   value: string;
   onSelect: (value: string) => void;
   onNext: () => void;
@@ -548,6 +563,53 @@ function OptionStep({
             emoji={option.emoji}
             selected={value === option.value}
             onSelect={() => onSelect(option.value)}
+          />
+        ))}
+      </View>
+    </OnboardingScreen>
+  );
+}
+
+function MultiSelectOptionStep({
+  config,
+  values,
+  onToggle,
+  onNext,
+  onBack,
+}: {
+  config: typeof SOCIAL_OPTIONS.group_size;
+  values: string[];
+  onToggle: (value: string) => void;
+  onNext: () => void;
+  onBack: () => void;
+}) {
+  return (
+    <OnboardingScreen
+      title={config.title}
+      subtitle={config.subtitle}
+      footer={
+        <View style={styles.footerButtons}>
+          <AnimatedPressable onPress={onBack} style={styles.backButton}>
+            <Ionicons name="arrow-back" size={24} color={colors.neutral[600]} />
+          </AnimatedPressable>
+          <View style={styles.nextButtonContainer}>
+            <PremiumButton onPress={onNext} gradient size="lg" disabled={values.length === 0}>
+              Continue
+            </PremiumButton>
+          </View>
+        </View>
+      }
+    >
+      <View style={styles.optionsContainer}>
+        {config.options.map((option) => (
+          <OnboardingOption
+            key={option.value}
+            label={option.label}
+            description={option.description}
+            emoji={option.emoji}
+            selected={values.includes(option.value)}
+            onSelect={() => onToggle(option.value)}
+            multiSelect
           />
         ))}
       </View>
