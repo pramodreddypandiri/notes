@@ -418,6 +418,26 @@ export default function ProfileScreen() {
                 />
               }
             />
+
+            <View style={[styles.divider, { backgroundColor: themedColors.surface.border }]} />
+
+            <SettingsRow
+              icon="location-outline"
+              title="Location Reminders"
+              description="Get notified at the right place"
+              themedColors={themedColors}
+              trailing={
+                <Ionicons
+                  name="chevron-forward"
+                  size={20}
+                  color={themedColors.text.muted}
+                />
+              }
+              onPress={() => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                router.push('/locations' as any);
+              }}
+            />
           </View>
         </Animated.View>
 
