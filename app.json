@@ -10,14 +10,17 @@
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.notesapp.notes",
+      "bundleIdentifier": "com.notesapp.voicenotes",
       "usesAppleSignIn": true,
       "infoPlist": {
         "NSSpeechRecognitionUsageDescription": "This app uses speech recognition to convert your voice notes to text.",
         "NSMicrophoneUsageDescription": "This app needs microphone access to record voice notes.",
         "NSLocationWhenInUseUsageDescription": "This app uses your location to provide location-based reminders when you arrive at or leave saved places.",
         "NSLocationAlwaysAndWhenInUseUsageDescription": "This app uses your location in the background to remind you of tasks when you arrive at or leave saved places like home, work, or stores.",
-        "UIBackgroundModes": ["location"]
+        "UIBackgroundModes": [
+          "location"
+        ],
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
@@ -29,11 +32,17 @@
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
-      "package": "com.notesapp.notes",
+      "package": "com.notesapp.voicenotes",
       "permissions": [
         "ACCESS_COARSE_LOCATION",
         "ACCESS_FINE_LOCATION",
-        "ACCESS_BACKGROUND_LOCATION"
+        "ACCESS_BACKGROUND_LOCATION",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_BACKGROUND_LOCATION",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_LOCATION"
       ]
     },
     "web": {
@@ -67,8 +76,13 @@
       ]
     ],
     "experiments": {
-      "typedRoutes": true,
-      "reactCompiler": true
+      "typedRoutes": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "d676cf2a-5bc7-4bf8-b616-7ccb12f07aa4"
+      }
     }
   }
 }

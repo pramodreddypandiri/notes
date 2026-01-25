@@ -96,6 +96,16 @@ export default function LocationsScreen() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
     if (value) {
+      // Check if running in Expo Go
+      if (locationService.isExpoGo()) {
+        Alert.alert(
+          'Development Build Required',
+          'Background location features require a development build. In Expo Go, only foreground location works.\n\nTo enable full location reminders, run:\nnpx expo run:ios',
+          [{ text: 'OK' }]
+        );
+        // Still allow enabling for foreground features
+      }
+
       // Request permissions when enabling
       const granted = await locationService.requestPermissions();
       if (!granted) {

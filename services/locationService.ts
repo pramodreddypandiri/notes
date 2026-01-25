@@ -129,6 +129,15 @@ class LocationService {
   }
 
   /**
+   * Check if running in Expo Go (which doesn't support background location)
+   */
+  isExpoGo(): boolean {
+    // @ts-ignore - Constants.expoConfig exists in Expo
+    const Constants = require('expo-constants').default;
+    return Constants.appOwnership === 'expo';
+  }
+
+  /**
    * Request location permissions
    */
   async requestPermissions(): Promise<boolean> {
@@ -140,6 +149,12 @@ class LocationService {
         return false;
       }
 
+      // Skip background permission request in Expo Go (not supported)
+      if (this.isExpoGo()) {
+        console.warn('[LocationService] Running in Expo Go - background location not supported');
+        return true; // Return true since foreground works
+      }
+
       // Then request background permission for geofencing
       const { status: backgroundStatus } = await Location.requestBackgroundPermissionsAsync();
       if (backgroundStatus !== 'granted') {
@@ -148,7 +163,12 @@ class LocationService {
       }
 
       return true;
-    } catch (error) {
+    } catch (error: any) {
+      // Handle Expo Go limitation error
+      if (error?.message?.includes('NSLocation') || error?.message?.includes('Info.plist')) {
+        console.warn('[LocationService] Running in Expo Go - background location requires a development build');
+        return false;
+      }
       console.error('[LocationService] Permission request error:', error);
       return false;
     }
