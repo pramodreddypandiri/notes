@@ -609,6 +609,58 @@ class ReminderService {
   }
 
   /**
+   * Cancel all scheduled notifications and re-schedule only active reminders.
+   * Call this on app launch to clean up stale/duplicate notifications.
+   */
+  async rescheduleAllReminders(): Promise<void> {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+
+      // Cancel ALL existing scheduled notifications to clear stale ones
+      await Notifications.cancelAllScheduledNotificationsAsync();
+      console.log('[ReminderService] Cleared all scheduled notifications');
+
+      // Fetch all active reminders from the database
+      const { data: reminders, error } = await supabase
+        .from('notes')
+        .select('*')
+        .eq('user_id', user.id)
+        .eq('is_reminder', true)
+        .eq('reminder_active', true);
+
+      if (error) throw error;
+
+      // Re-schedule each active reminder
+      for (const reminder of (reminders || [])) {
+        const parsedReminder = reminder.parsed_data?.reminder;
+        if (!parsedReminder) continue;
+
+        const scheduledIds = await this.scheduleReminder(
+          reminder.id,
+          reminder.transcript,
+          {
+            isReminder: true,
+            reminderType: reminder.reminder_type,
+            eventDate: reminder.event_date,
+            reminderDaysBefore: reminder.reminder_days_before,
+            recurrencePattern: reminder.recurrence_pattern,
+            recurrenceDay: reminder.recurrence_day,
+            recurrenceTime: reminder.recurrence_time,
+            reminderSummary: parsedReminder.reminderSummary || reminder.parsed_data?.summary,
+          } as ParsedReminder
+        );
+
+        console.log(`[ReminderService] Re-scheduled ${scheduledIds.length} notifications for note ${reminder.id}`);
+      }
+
+      console.log(`[ReminderService] Re-scheduled all active reminders (${(reminders || []).length} total)`);
+    } catch (error) {
+      console.error('[ReminderService] Failed to reschedule reminders:', error);
+    }
+  }
+
+  /**
    * Get upcoming reminders (for the next 7 days)
    */
   async getUpcomingReminders(days: number = 7): Promise<TodaysReminder[]> {

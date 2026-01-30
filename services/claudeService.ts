@@ -31,6 +31,13 @@ export interface ParsedReminder {
   reminderSummary?: string; // what to remind about
 }
 
+// Place intent detection
+export interface PlaceIntent {
+  detected: boolean;
+  searchQuery: string;
+  placeType?: string;
+}
+
 interface ParsedNote {
   type: 'task' | 'preference' | 'intent' | 'reminder';
   activity?: string;
@@ -42,6 +49,8 @@ interface ParsedNote {
   shoppingItems?: string[];
   // Reminder fields
   reminder?: ParsedReminder;
+  // Place intent
+  placeIntent?: PlaceIntent;
 }
 
 // Check if Claude API is configured
@@ -216,12 +225,72 @@ const detectReminderLocally = (transcript: string): ParsedReminder | null => {
   return reminder;
 };
 
+// Local detection of place intent (e.g., "I want to go to a salon")
+const PLACE_TYPE_KEYWORDS = [
+  'salon', 'barbershop', 'spa', 'dentist', 'doctor', 'hospital', 'clinic',
+  'restaurant', 'cafe', 'coffee shop', 'bar', 'pub', 'brewery',
+  'gym', 'yoga studio', 'fitness center',
+  'mechanic', 'auto shop', 'car wash',
+  'hotel', 'motel',
+  'park', 'beach', 'trail',
+  'store', 'shop', 'mall', 'market',
+  'theater', 'cinema', 'museum', 'gallery',
+  'vet', 'veterinarian', 'pet store',
+  'tailor', 'dry cleaner', 'laundromat',
+  'library', 'bookstore',
+  'bank', 'atm', 'post office',
+];
+
+const detectPlaceIntentLocally = (transcript: string): PlaceIntent => {
+  const lower = transcript.toLowerCase();
+
+  // Patterns that indicate wanting to visit a place
+  const intentPatterns = [
+    /(?:want|wanna|need|looking|searching)\s+(?:to\s+)?(?:go\s+to\s+|find\s+|visit\s+)?(?:a\s+|an\s+)?(?:good\s+|nice\s+|great\s+|the\s+best\s+)?(.+?)(?:\s+near(?:by)?|\s+around|\s+close|\s+in\s+town)?$/i,
+    /(?:should|let'?s|let\s+us|gotta)\s+(?:go\s+to|find|visit|try|check\s+out)\s+(?:a\s+|an\s+)?(?:good\s+|nice\s+)?(.+?)$/i,
+    /(?:book|schedule)\s+(?:an?\s+)?(?:appointment\s+(?:at|with)\s+)?(?:a\s+|an\s+)?(.+?)$/i,
+    /(?:i\s+need|we\s+need)\s+(?:a\s+|an\s+)?(?:good\s+|new\s+)?(.+?)$/i,
+  ];
+
+  // Check if transcript contains place-type keywords
+  const matchedKeyword = PLACE_TYPE_KEYWORDS.find(kw => lower.includes(kw));
+
+  for (const pattern of intentPatterns) {
+    const match = lower.match(pattern);
+    if (match && match[1]) {
+      const extracted = match[1].trim();
+      // Validate: must contain a place keyword or be a reasonable length
+      if (matchedKeyword || (extracted.length > 2 && extracted.length < 50)) {
+        return {
+          detected: true,
+          searchQuery: extracted,
+          placeType: matchedKeyword || undefined,
+        };
+      }
+    }
+  }
+
+  // Fallback: if the transcript contains a place keyword with some context
+  if (matchedKeyword && /\b(go|find|visit|need|want|looking|search)\b/i.test(lower)) {
+    return {
+      detected: true,
+      searchQuery: matchedKeyword,
+      placeType: matchedKeyword,
+    };
+  }
+
+  return { detected: false, searchQuery: '' };
+};
+
 export const parseNote = async (transcript: string): Promise<ParsedNote> => {
   // First, detect location category locally (no API needed)
   const { category: localCategory, items: shoppingItems } = detectLocationCategoryLocally(transcript);
 
   // Detect reminders locally
   const localReminder = detectReminderLocally(transcript);
+
+  // Detect place intent locally
+  const localPlaceIntent = detectPlaceIntentLocally(transcript);
 
   // If Claude API not configured, return simple fallback with local detection
   if (!isClaudeConfigured()) {
@@ -232,6 +301,7 @@ export const parseNote = async (transcript: string): Promise<ParsedNote> => {
       locationCategory: localCategory,
       shoppingItems: shoppingItems.length > 0 ? shoppingItems : undefined,
       reminder: localReminder || undefined,
+      placeIntent: localPlaceIntent.detected ? localPlaceIntent : undefined,
     };
   }
 
@@ -275,7 +345,12 @@ Return format:
     "recurrenceDay": number (0-6 for weekly where 0=Sunday, 1-31 for monthly),
     "recurrenceTime": string (HH:mm format, e.g. "09:00"),
     "reminderSummary": string (what to remind about)
-  } (only if this is a reminder)
+  } (only if this is a reminder),
+  "placeIntent": {
+    "detected": boolean,
+    "searchQuery": string (the place/business type to search for nearby),
+    "placeType": string (specific business type if clear)
+  } (only if user wants to find/visit a place)
 }
 
 Reminder Detection Guidelines:
@@ -298,7 +373,9 @@ Location Category Guidelines:
 Examples:
 "Remind me every Monday morning to post on LinkedIn" -> {"type": "reminder", "summary": "Post on LinkedIn", "reminder": {"isReminder": true, "reminderType": "recurring", "recurrencePattern": "weekly", "recurrenceDay": 1, "recurrenceTime": "09:00", "reminderSummary": "Post on LinkedIn"}}
 "I have an event on Feb 18th, remind me 2 days before" -> {"type": "reminder", "summary": "Event on Feb 18th", "reminder": {"isReminder": true, "reminderType": "one-time", "eventDate": "2025-02-18", "reminderDaysBefore": 2, "reminderSummary": "Event on Feb 18th"}}
-"I'm out of milk" -> {"type": "task", "summary": "Buy: milk", "locationCategory": "grocery", "shoppingItems": ["milk"]}`,
+"I'm out of milk" -> {"type": "task", "summary": "Buy: milk", "locationCategory": "grocery", "shoppingItems": ["milk"]}
+"I want to go to a salon" -> {"type": "intent", "summary": "Visit a salon", "placeIntent": {"detected": true, "searchQuery": "salon", "placeType": "salon"}}
+"Need to find a good dentist" -> {"type": "intent", "summary": "Find a dentist", "placeIntent": {"detected": true, "searchQuery": "good dentist", "placeType": "dentist"}}`,
           },
         ],
       }),
@@ -323,6 +400,10 @@ Examples:
       parsed.reminder = localReminder;
       parsed.type = 'reminder';
     }
+    // Use local place intent detection as fallback
+    if (!parsed.placeIntent?.detected && localPlaceIntent.detected) {
+      parsed.placeIntent = localPlaceIntent;
+    }
 
     return parsed;
   } catch (error) {
@@ -334,6 +415,7 @@ Examples:
       locationCategory: localCategory,
       shoppingItems: shoppingItems.length > 0 ? shoppingItems : undefined,
       reminder: localReminder || undefined,
+      placeIntent: localPlaceIntent.detected ? localPlaceIntent : undefined,
     };
   }
 };

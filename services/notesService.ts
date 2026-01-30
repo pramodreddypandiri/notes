@@ -2,6 +2,7 @@ import { supabase } from '../config/supabase';
 import { parseNote, ParsedReminder } from './claudeService';
 import notificationService from './notificationService';
 import reminderService from './reminderService';
+import { searchAndStoreNotePlaces } from './googlePlacesService';
 
 // Keywords that indicate a reminder intent
 const REMINDER_KEYWORDS = [
@@ -126,6 +127,9 @@ export const createNoteWithReminder = async (
       recurrence_day: parsedData.reminder?.recurrenceDay ?? null,
       recurrence_time: parsedData.reminder?.recurrenceTime || '09:00',
       reminder_active: true,
+      // Place intent fields
+      place_intent: parsedData.placeIntent?.detected || false,
+      place_search_query: parsedData.placeIntent?.searchQuery || null,
     };
 
     let notificationId: string | null = null;
@@ -137,7 +141,9 @@ export const createNoteWithReminder = async (
     };
 
     // Schedule reminder if applicable
-    if (isReminder) {
+    // IMPORTANT: Skip old notification path for new-style reminders (one-time events, recurring)
+    // to avoid duplicate/incorrect notifications. The new reminderService handles these correctly.
+    if (isReminder && !hasNewReminder) {
       const noteDisplayText = parsedData.summary || transcript;
 
       if (customReminderTime && isValidDate(customReminderTime)) {
@@ -191,6 +197,12 @@ export const createNoteWithReminder = async (
       .single();
 
     if (error) throw error;
+
+    // If place intent detected, search for real nearby places in background
+    if (parsedData.placeIntent?.detected && data) {
+      searchAndStoreNotePlaces(data.id, parsedData.placeIntent.searchQuery)
+        .catch(err => console.error('Failed to search places for note:', err));
+    }
 
     // Schedule reminders using the new reminder service if it's a new-style reminder
     if (hasNewReminder && parsedData.reminder && data) {
@@ -414,6 +426,7 @@ export const getPendingLocationNotes = async (
       .eq('user_id', user.id)
       .not('location_category', 'is', null)
       .eq('location_completed', false)
+      .or('is_reminder.is.null,is_reminder.eq.false') // Exclude time-based reminders
       .order('created_at', { ascending: false });
 
     if (category) {
@@ -445,6 +458,7 @@ export const getNotesByLocationCategory = async (
       .eq('user_id', user.id)
       .in('location_category', categories)
       .eq('location_completed', false)
+      .or('is_reminder.is.null,is_reminder.eq.false') // Exclude time-based reminders
       .order('created_at', { ascending: false });
 
     if (error) throw error;

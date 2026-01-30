@@ -32,6 +32,7 @@ import { useTheme } from '../../context/ThemeContext';
 // Components
 import PremiumButton from '../../components/ui/PremiumButton';
 import { PlaceCard } from '../../components/plans/PlaceCard';
+import { GooglePlaceCard } from '../../components/plans/GooglePlaceCard';
 import { PlanGenerationLoader } from '../../components/plans/PlanGenerationLoader';
 import TopBar from '../../components/common/TopBar';
 
@@ -44,6 +45,12 @@ import {
   removeLikedPlace,
   StoredPlaceSuggestion,
 } from '../../services/plansService';
+import {
+  getAllNotePlaces,
+  dismissNotePlaceResult,
+  NotePlaceGroup,
+  GooglePlaceResult,
+} from '../../services/googlePlacesService';
 import { supabase } from '../../config/supabase';
 import soundService from '../../services/soundService';
 
@@ -53,6 +60,7 @@ export default function PlansScreen() {
 
   const [suggestions, setSuggestions] = useState<StoredPlaceSuggestion[]>([]);
   const [likedPlaces, setLikedPlaces] = useState<StoredPlaceSuggestion[]>([]);
+  const [notePlaces, setNotePlaces] = useState<NotePlaceGroup[]>([]);
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [showGenerator, setShowGenerator] = useState(false);
@@ -65,12 +73,14 @@ export default function PlansScreen() {
 
   const loadPlaces = async () => {
     try {
-      const [suggestionsData, likedData] = await Promise.all([
+      const [suggestionsData, likedData, notePlacesData] = await Promise.all([
         getSuggestions(),
         getLikedPlaces(),
+        getAllNotePlaces(),
       ]);
       setSuggestions(suggestionsData);
       setLikedPlaces(likedData);
+      setNotePlaces(notePlacesData);
     } catch (error) {
       console.error('Failed to load places:', error);
     } finally {
@@ -168,17 +178,41 @@ export default function PlansScreen() {
     }
   };
 
+  const handleDismissPlace = async (resultId: string) => {
+    try {
+      await dismissNotePlaceResult(resultId);
+      setNotePlaces(prev =>
+        prev
+          .map(np => ({
+            ...np,
+            places: np.places.filter(p => p.id !== resultId),
+          }))
+          .filter(np => np.places.length > 0)
+      );
+    } catch (error) {
+      console.error('Failed to dismiss place:', error);
+    }
+  };
+
+  // Flatten note places into a single array with note context
+  const notePlacesFlat = notePlaces.flatMap(np =>
+    np.places.map(p => ({ ...p, noteContext: np.noteSummary || np.noteTranscript }))
+  );
+
   // Prepare sections for SectionList
-  const sections = [
+  const sections: { title: string; data: any[]; type: 'going' | 'note_places' | 'suggestion' }[] = [
     ...(likedPlaces.length > 0
       ? [{ title: 'Going', data: likedPlaces, type: 'going' as const }]
+      : []),
+    ...(notePlacesFlat.length > 0
+      ? [{ title: 'From Your Notes', data: notePlacesFlat, type: 'note_places' as const }]
       : []),
     ...(suggestions.length > 0
       ? [{ title: 'Suggestions', data: suggestions, type: 'suggestion' as const }]
       : []),
   ];
 
-  const isEmpty = likedPlaces.length === 0 && suggestions.length === 0;
+  const isEmpty = likedPlaces.length === 0 && suggestions.length === 0 && notePlacesFlat.length === 0;
 
   return (
     <View style={[styles.container, { backgroundColor: themedColors.background.primary }]}>
@@ -223,16 +257,27 @@ export default function PlansScreen() {
               themedColors={themedColors}
             />
           )}
-          renderItem={({ item, index, section }) => (
-            <PlaceCard
-              place={item}
-              index={index}
-              onLike={handleLike}
-              onDislike={handleDislike}
-              variant={section.type === 'going' ? 'going' : 'suggestion'}
-              onRemove={section.type === 'going' ? handleRemoveLiked : undefined}
-            />
-          )}
+          renderItem={({ item, index, section }) => {
+            if (section.type === 'note_places') {
+              return (
+                <GooglePlaceCard
+                  place={item}
+                  index={index}
+                  onDismiss={handleDismissPlace}
+                />
+              );
+            }
+            return (
+              <PlaceCard
+                place={item}
+                index={index}
+                onLike={handleLike}
+                onDislike={handleDislike}
+                variant={section.type === 'going' ? 'going' : 'suggestion'}
+                onRemove={section.type === 'going' ? handleRemoveLiked : undefined}
+              />
+            );
+          }}
           contentContainerStyle={styles.listContent}
           showsVerticalScrollIndicator={false}
           stickySectionHeadersEnabled={false}
@@ -274,9 +319,12 @@ function SectionHeader({
 }: {
   title: string;
   count: number;
-  type: 'going' | 'suggestion';
+  type: 'going' | 'suggestion' | 'note_places';
   themedColors: ReturnType<typeof getThemedColors>;
 }) {
+  const iconName = type === 'going' ? 'heart' : type === 'note_places' ? 'document-text' : 'sparkles';
+  const iconColor = type === 'going' ? colors.accent.emerald.base : type === 'note_places' ? colors.accent.amber.base : colors.primary[500];
+
   return (
     <Animated.View
       entering={FadeIn.delay(100)}
@@ -284,9 +332,9 @@ function SectionHeader({
     >
       <View style={styles.sectionTitleContainer}>
         <Ionicons
-          name={type === 'going' ? 'heart' : 'sparkles'}
+          name={iconName as any}
           size={20}
-          color={type === 'going' ? colors.accent.emerald.base : colors.primary[500]}
+          color={iconColor}
         />
         <Text style={[styles.sectionTitle, { color: themedColors.text.primary }]}>
           {title}

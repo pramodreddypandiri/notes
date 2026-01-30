@@ -1,10 +1,11 @@
 import { Stack, useRouter, useSegments } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { StyleSheet } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { supabase } from '../config/supabase';
 import { ThemeProvider } from '../context/ThemeContext';
+import reminderService from '../services/reminderService';
 import './globals.css';
 
 export default function RootLayout() {
@@ -27,6 +28,18 @@ export default function RootLayout() {
 
     return () => subscription.unsubscribe();
   }, []);
+
+  // Clean up stale notifications and re-schedule active reminders on login
+  const hasRescheduled = useRef(false);
+  useEffect(() => {
+    if (isAuthenticated && !hasRescheduled.current) {
+      hasRescheduled.current = true;
+      reminderService.rescheduleAllReminders();
+    }
+    if (!isAuthenticated) {
+      hasRescheduled.current = false;
+    }
+  }, [isAuthenticated]);
 
   useEffect(() => {
     if (isAuthenticated === null) return; // Still loading
