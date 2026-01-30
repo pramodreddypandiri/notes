@@ -10,7 +10,7 @@
  */
 
 import React, { useState } from 'react';
-import { StyleSheet, View, Text } from 'react-native';
+import { StyleSheet, View, Text, Linking, Platform } from 'react-native';
 import Animated, {
   useAnimatedStyle,
   useSharedValue,
@@ -25,6 +25,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
+import { LinearGradient } from 'expo-linear-gradient';
 import AnimatedPressable from '../ui/AnimatedPressable';
 import { colors, typography, spacing, borderRadius, shadows, getThemedColors } from '../../theme';
 import { useTheme } from '../../context/ThemeContext';
@@ -109,6 +110,16 @@ export function PlaceCard({
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       setIsAnimatingOut('left');
       setTimeout(() => onRemove(place.id), 200);
+    }
+  };
+
+  const handleNavigate = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    const query = place.address || place.name;
+    if (Platform.OS === 'ios') {
+      Linking.openURL(`maps://?q=${encodeURIComponent(query)}`);
+    } else {
+      Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`);
     }
   };
 
@@ -213,13 +224,23 @@ export function PlaceCard({
         </View>
       ) : (
         <View style={styles.goingActionContainer}>
+          <AnimatedPressable onPress={handleNavigate} style={styles.navigateWrapper} hapticType="medium">
+            <LinearGradient
+              colors={colors.gradients.primary as [string, string]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={styles.navigateButton}
+            >
+              <Ionicons name="navigate-outline" size={18} color={colors.neutral[0]} />
+              <Text style={styles.navigateText}>Navigate</Text>
+            </LinearGradient>
+          </AnimatedPressable>
           <AnimatedPressable
             onPress={handleRemove}
             style={[styles.removeButton, { borderColor: themedColors.surface.border }]}
             hapticType="light"
           >
             <Ionicons name="trash-outline" size={18} color={colors.neutral[500]} />
-            <Text style={[styles.removeText, { color: themedColors.text.tertiary }]}>Remove</Text>
           </AnimatedPressable>
         </View>
       )}
@@ -323,19 +344,33 @@ const styles = StyleSheet.create({
     borderColor: colors.neutral[300],
   },
   goingActionContainer: {
-    alignItems: 'flex-start',
-  },
-  removeButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: spacing[1],
-    paddingVertical: spacing[2],
-    paddingHorizontal: spacing[3],
+    gap: spacing[3],
+  },
+  navigateWrapper: {
+    flex: 1,
+  },
+  navigateButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing[2],
+    paddingVertical: spacing[3],
+    borderRadius: borderRadius.lg,
+  },
+  navigateText: {
+    fontSize: typography.fontSize.base,
+    fontWeight: typography.fontWeight.semibold,
+    color: colors.neutral[0],
+  },
+  removeButton: {
+    width: 44,
+    height: 44,
     borderRadius: borderRadius.md,
     borderWidth: 1,
-  },
-  removeText: {
-    fontSize: typography.fontSize.sm,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
 });
 

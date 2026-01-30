@@ -16,7 +16,8 @@ import {
   RefreshControl,
   StatusBar,
   Alert,
-  SectionList,
+  FlatList,
+  TouchableOpacity,
 } from 'react-native';
 import Animated, { FadeIn } from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
@@ -24,7 +25,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
 
 // Theme
-import { colors, typography, spacing, borderRadius, shadows, getThemedColors } from '../../theme';
+import { colors, typography, spacing, shadows, getThemedColors } from '../../theme';
 
 // Context
 import { useTheme } from '../../context/ThemeContext';
@@ -65,6 +66,7 @@ export default function PlansScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [showGenerator, setShowGenerator] = useState(false);
   const [initialLoading, setInitialLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState<'going' | 'suggestions'>('going');
 
   // Load existing suggestions and liked places on mount
   useEffect(() => {
@@ -199,20 +201,20 @@ export default function PlansScreen() {
     np.places.map(p => ({ ...p, noteContext: np.noteSummary || np.noteTranscript }))
   );
 
-  // Prepare sections for SectionList
-  const sections: { title: string; data: any[]; type: 'going' | 'note_places' | 'suggestion' }[] = [
-    ...(likedPlaces.length > 0
-      ? [{ title: 'Going', data: likedPlaces, type: 'going' as const }]
-      : []),
-    ...(notePlacesFlat.length > 0
-      ? [{ title: 'From Your Notes', data: notePlacesFlat, type: 'note_places' as const }]
-      : []),
-    ...(suggestions.length > 0
-      ? [{ title: 'Suggestions', data: suggestions, type: 'suggestion' as const }]
-      : []),
+  const isEmpty = likedPlaces.length === 0 && suggestions.length === 0 && notePlacesFlat.length === 0;
+
+  // Build data for the Suggestions tab: note places + AI suggestions
+  const suggestionsTabData: { type: 'note_places' | 'suggestion'; item: any }[] = [
+    ...notePlacesFlat.map(p => ({ type: 'note_places' as const, item: p })),
+    ...suggestions.map(s => ({ type: 'suggestion' as const, item: s })),
   ];
 
-  const isEmpty = likedPlaces.length === 0 && suggestions.length === 0 && notePlacesFlat.length === 0;
+  const handleTabSwitch = (tab: 'going' | 'suggestions') => {
+    if (tab !== activeTab) {
+      setActiveTab(tab);
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    }
+  };
 
   return (
     <View style={[styles.container, { backgroundColor: themedColors.background.primary }]}>
@@ -246,106 +248,180 @@ export default function PlansScreen() {
       ) : isEmpty ? (
         <EmptyState onGenerate={handleGenerateSuggestions} loading={loading} themedColors={themedColors} />
       ) : (
-        <SectionList
-          sections={sections}
-          keyExtractor={(item) => item.id}
-          renderSectionHeader={({ section }) => (
-            <SectionHeader
-              title={section.title}
-              count={section.data.length}
-              type={section.type}
-              themedColors={themedColors}
-            />
-          )}
-          renderItem={({ item, index, section }) => {
-            if (section.type === 'note_places') {
-              return (
-                <GooglePlaceCard
+        <>
+          {/* Tab Bar */}
+          <View style={[styles.tabBar, { borderBottomColor: themedColors.surface.border }]}>
+            <TouchableOpacity
+              style={[
+                styles.tab,
+                activeTab === 'going' && styles.tabActive,
+                activeTab === 'going' && { borderBottomColor: colors.accent.emerald.base },
+              ]}
+              onPress={() => handleTabSwitch('going')}
+              activeOpacity={0.7}
+            >
+              <Ionicons
+                name="heart"
+                size={16}
+                color={activeTab === 'going' ? colors.accent.emerald.base : themedColors.text.tertiary}
+              />
+              <Text
+                style={[
+                  styles.tabText,
+                  { color: activeTab === 'going' ? themedColors.text.primary : themedColors.text.tertiary },
+                  activeTab === 'going' && styles.tabTextActive,
+                ]}
+              >
+                Going
+              </Text>
+              {likedPlaces.length > 0 && (
+                <View style={[styles.tabBadge, { backgroundColor: activeTab === 'going' ? colors.accent.emerald.base : themedColors.surface.secondary }]}>
+                  <Text style={[styles.tabBadgeText, { color: activeTab === 'going' ? colors.neutral[0] : themedColors.text.secondary }]}>
+                    {likedPlaces.length}
+                  </Text>
+                </View>
+              )}
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[
+                styles.tab,
+                activeTab === 'suggestions' && styles.tabActive,
+                activeTab === 'suggestions' && { borderBottomColor: colors.primary[500] },
+              ]}
+              onPress={() => handleTabSwitch('suggestions')}
+              activeOpacity={0.7}
+            >
+              <Ionicons
+                name="sparkles"
+                size={16}
+                color={activeTab === 'suggestions' ? colors.primary[500] : themedColors.text.tertiary}
+              />
+              <Text
+                style={[
+                  styles.tabText,
+                  { color: activeTab === 'suggestions' ? themedColors.text.primary : themedColors.text.tertiary },
+                  activeTab === 'suggestions' && styles.tabTextActive,
+                ]}
+              >
+                Suggestions
+              </Text>
+              {suggestionsTabData.length > 0 && (
+                <View style={[styles.tabBadge, { backgroundColor: activeTab === 'suggestions' ? colors.primary[500] : themedColors.surface.secondary }]}>
+                  <Text style={[styles.tabBadgeText, { color: activeTab === 'suggestions' ? colors.neutral[0] : themedColors.text.secondary }]}>
+                    {suggestionsTabData.length}
+                  </Text>
+                </View>
+              )}
+            </TouchableOpacity>
+          </View>
+
+          {/* Tab Content */}
+          {activeTab === 'going' ? (
+            <FlatList
+              data={likedPlaces}
+              keyExtractor={(item) => item.id}
+              renderItem={({ item, index }) => (
+                <PlaceCard
                   place={item}
                   index={index}
-                  onDismiss={handleDismissPlace}
+                  onLike={handleLike}
+                  onDislike={handleDislike}
+                  variant="going"
+                  onRemove={handleRemoveLiked}
                 />
-              );
-            }
-            return (
-              <PlaceCard
-                place={item}
-                index={index}
-                onLike={handleLike}
-                onDislike={handleDislike}
-                variant={section.type === 'going' ? 'going' : 'suggestion'}
-                onRemove={section.type === 'going' ? handleRemoveLiked : undefined}
-              />
-            );
-          }}
-          contentContainerStyle={styles.listContent}
-          showsVerticalScrollIndicator={false}
-          stickySectionHeadersEnabled={false}
-          refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={handleRefresh}
-              tintColor={colors.primary[500]}
-              colors={[colors.primary[500]]}
+              )}
+              contentContainerStyle={[
+                styles.listContent,
+                likedPlaces.length === 0 && styles.emptyTabContent,
+              ]}
+              showsVerticalScrollIndicator={false}
+              refreshControl={
+                <RefreshControl
+                  refreshing={refreshing}
+                  onRefresh={handleRefresh}
+                  tintColor={colors.primary[500]}
+                  colors={[colors.primary[500]]}
+                />
+              }
+              ListEmptyComponent={
+                <View style={styles.emptyTab}>
+                  <Ionicons name="heart-outline" size={48} color={themedColors.text.tertiary} />
+                  <Text style={[styles.emptyTabTitle, { color: themedColors.text.secondary }]}>
+                    No places yet
+                  </Text>
+                  <Text style={[styles.emptyTabText, { color: themedColors.text.tertiary }]}>
+                    Like suggestions to add them here
+                  </Text>
+                </View>
+              }
             />
-          }
-          ListFooterComponent={
-            suggestions.length > 0 ? (
-              <View style={styles.footerContainer}>
-                <PremiumButton
-                  onPress={handleGenerateSuggestions}
-                  loading={loading}
-                  gradient
-                  size="md"
-                  icon={!loading ? <Ionicons name="sparkles" size={18} color={colors.neutral[0]} /> : undefined}
-                >
-                  Get More Suggestions
-                </PremiumButton>
-              </View>
-            ) : null
-          }
-        />
+          ) : (
+            <FlatList
+              data={suggestionsTabData}
+              keyExtractor={(entry, index) => entry.item.id || `${index}`}
+              renderItem={({ item: entry, index }) => {
+                if (entry.type === 'note_places') {
+                  return (
+                    <GooglePlaceCard
+                      place={entry.item}
+                      index={index}
+                      onDismiss={handleDismissPlace}
+                    />
+                  );
+                }
+                return (
+                  <PlaceCard
+                    place={entry.item}
+                    index={index}
+                    onLike={handleLike}
+                    onDislike={handleDislike}
+                    variant="suggestion"
+                  />
+                );
+              }}
+              contentContainerStyle={[
+                styles.listContent,
+                suggestionsTabData.length === 0 && styles.emptyTabContent,
+              ]}
+              showsVerticalScrollIndicator={false}
+              refreshControl={
+                <RefreshControl
+                  refreshing={refreshing}
+                  onRefresh={handleRefresh}
+                  tintColor={colors.primary[500]}
+                  colors={[colors.primary[500]]}
+                />
+              }
+              ListFooterComponent={
+                <View style={styles.footerContainer}>
+                  <PremiumButton
+                    onPress={handleGenerateSuggestions}
+                    loading={loading}
+                    gradient
+                    size="md"
+                    icon={!loading ? <Ionicons name="sparkles" size={18} color={colors.neutral[0]} /> : undefined}
+                  >
+                    {suggestions.length > 0 ? 'Get More Suggestions' : 'Get Suggestions'}
+                  </PremiumButton>
+                </View>
+              }
+              ListEmptyComponent={
+                <View style={styles.emptyTab}>
+                  <Ionicons name="sparkles-outline" size={48} color={themedColors.text.tertiary} />
+                  <Text style={[styles.emptyTabTitle, { color: themedColors.text.secondary }]}>
+                    No suggestions yet
+                  </Text>
+                  <Text style={[styles.emptyTabText, { color: themedColors.text.tertiary }]}>
+                    Tap below to get personalized places
+                  </Text>
+                </View>
+              }
+            />
+          )}
+        </>
       )}
     </View>
-  );
-}
-
-// Section Header Component
-function SectionHeader({
-  title,
-  count,
-  type,
-  themedColors,
-}: {
-  title: string;
-  count: number;
-  type: 'going' | 'suggestion' | 'note_places';
-  themedColors: ReturnType<typeof getThemedColors>;
-}) {
-  const iconName = type === 'going' ? 'heart' : type === 'note_places' ? 'document-text' : 'sparkles';
-  const iconColor = type === 'going' ? colors.accent.emerald.base : type === 'note_places' ? colors.accent.amber.base : colors.primary[500];
-
-  return (
-    <Animated.View
-      entering={FadeIn.delay(100)}
-      style={styles.sectionHeader}
-    >
-      <View style={styles.sectionTitleContainer}>
-        <Ionicons
-          name={iconName as any}
-          size={20}
-          color={iconColor}
-        />
-        <Text style={[styles.sectionTitle, { color: themedColors.text.primary }]}>
-          {title}
-        </Text>
-        <View style={[styles.countBadge, { backgroundColor: themedColors.surface.secondary }]}>
-          <Text style={[styles.countText, { color: themedColors.text.secondary }]}>
-            {count}
-          </Text>
-        </View>
-      </View>
-    </Animated.View>
   );
 }
 
@@ -468,31 +544,65 @@ const styles = StyleSheet.create({
   loadingText: {
     fontSize: typography.fontSize.base,
   },
+  tabBar: {
+    flexDirection: 'row',
+    marginHorizontal: spacing[5],
+    borderBottomWidth: 1,
+    marginBottom: spacing[1],
+  },
+  tab: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing[2],
+    paddingVertical: spacing[3],
+    borderBottomWidth: 2,
+    borderBottomColor: 'transparent',
+  },
+  tabActive: {
+    borderBottomWidth: 2,
+  },
+  tabText: {
+    fontSize: typography.fontSize.sm,
+    fontWeight: typography.fontWeight.medium,
+  },
+  tabTextActive: {
+    fontWeight: typography.fontWeight.semibold,
+  },
+  tabBadge: {
+    minWidth: 20,
+    height: 20,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: spacing[1],
+  },
+  tabBadgeText: {
+    fontSize: typography.fontSize.xs,
+    fontWeight: typography.fontWeight.semibold,
+  },
   listContent: {
     padding: spacing[5],
     paddingBottom: spacing[20],
   },
-  sectionHeader: {
-    marginBottom: spacing[3],
-    marginTop: spacing[2],
+  emptyTabContent: {
+    flexGrow: 1,
   },
-  sectionTitleContainer: {
-    flexDirection: 'row',
+  emptyTab: {
     alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: spacing[16],
     gap: spacing[2],
   },
-  sectionTitle: {
-    fontSize: typography.fontSize.lg,
+  emptyTabTitle: {
+    fontSize: typography.fontSize.base,
     fontWeight: typography.fontWeight.semibold,
+    marginTop: spacing[2],
   },
-  countBadge: {
-    paddingHorizontal: spacing[2],
-    paddingVertical: 2,
-    borderRadius: borderRadius.full,
-  },
-  countText: {
-    fontSize: typography.fontSize.xs,
-    fontWeight: typography.fontWeight.semibold,
+  emptyTabText: {
+    fontSize: typography.fontSize.sm,
+    textAlign: 'center',
   },
   footerContainer: {
     marginTop: spacing[4],

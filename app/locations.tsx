@@ -8,7 +8,7 @@
  * - Search for addresses
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -22,6 +22,7 @@ import {
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
+  TouchableOpacity,
 } from 'react-native';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
@@ -42,6 +43,11 @@ import locationService, {
   LocationType,
   LocationSettings,
 } from '../services/locationService';
+import {
+  autocompleteAddress,
+  getPlaceDetailsById,
+  AddressSuggestion,
+} from '../services/googlePlacesService';
 
 // Context
 import { useTheme } from '../context/ThemeContext';
@@ -518,6 +524,10 @@ function AddLocationModal({
   const [notifyOnExit, setNotifyOnExit] = useState(false);
   const [searchLoading, setSearchLoading] = useState(false);
   const [coordinates, setCoordinates] = useState({ lat: 0, lng: 0 });
+  const [suggestions, setSuggestions] = useState<AddressSuggestion[]>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [suggestionsLoading, setSuggestionsLoading] = useState(false);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Reset form when modal opens/closes or location changes
   useEffect(() => {
@@ -537,6 +547,8 @@ function AddLocationModal({
         setNotifyOnExit(false);
         setCoordinates({ lat: 0, lng: 0 });
       }
+      setSuggestions([]);
+      setShowSuggestions(false);
     }
   }, [visible, location]);
 
@@ -551,26 +563,46 @@ function AddLocationModal({
     }
   }, [type]);
 
-  const handleSearchAddress = async () => {
-    if (!address.trim()) return;
+  // Debounced address autocomplete
+  const handleAddressChange = useCallback((text: string) => {
+    setAddress(text);
 
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+
+    if (text.trim().length < 3) {
+      setSuggestions([]);
+      setShowSuggestions(false);
+      return;
+    }
+
+    setSuggestionsLoading(true);
+    setShowSuggestions(true);
+    debounceRef.current = setTimeout(async () => {
+      const results = await autocompleteAddress(text);
+      setSuggestions(results);
+      setSuggestionsLoading(false);
+    }, 300);
+  }, []);
+
+  const handleSelectSuggestion = useCallback(async (suggestion: AddressSuggestion) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setAddress(suggestion.fullText);
+    setSuggestions([]);
+    setShowSuggestions(false);
+
+    // Fetch place details for coordinates
     setSearchLoading(true);
     try {
-      const location = await locationService.getCurrentLocation();
-      if (location) {
-        // For now, use current location as fallback
-        // In production, you'd use a geocoding API
-        setCoordinates({
-          lat: location.coords.latitude,
-          lng: location.coords.longitude,
-        });
+      const details = await getPlaceDetailsById(suggestion.placeId);
+      if (details) {
+        setCoordinates({ lat: details.latitude, lng: details.longitude });
       }
     } catch (error) {
-      console.error('Failed to search address:', error);
+      console.error('Failed to get place details:', error);
     } finally {
       setSearchLoading(false);
     }
-  };
+  }, []);
 
   const handleUseCurrentLocation = async () => {
     setSearchLoading(true);
@@ -732,10 +764,9 @@ function AddLocationModal({
                   },
                 ]}
                 value={address}
-                onChangeText={setAddress}
+                onChangeText={handleAddressChange}
                 placeholder="Search for an address"
                 placeholderTextColor={themedColors.input.placeholder}
-                onBlur={handleSearchAddress}
               />
               <AnimatedPressable
                 onPress={handleUseCurrentLocation}
@@ -749,8 +780,53 @@ function AddLocationModal({
                 )}
               </AnimatedPressable>
             </View>
+
+            {/* Address Suggestions Dropdown */}
+            {showSuggestions && (
+              <View style={[styles.suggestionsContainer, shadows.md, { backgroundColor: themedColors.surface.primary, borderColor: themedColors.surface.border }]}>
+                {suggestionsLoading && suggestions.length === 0 ? (
+                  <View style={styles.suggestionsLoading}>
+                    <ActivityIndicator size="small" color={colors.primary[500]} />
+                    <Text style={[styles.suggestionsLoadingText, { color: themedColors.text.tertiary }]}>
+                      Searching...
+                    </Text>
+                  </View>
+                ) : suggestions.length > 0 ? (
+                  suggestions.map((suggestion, index) => (
+                    <TouchableOpacity
+                      key={suggestion.placeId}
+                      style={[
+                        styles.suggestionRow,
+                        index < suggestions.length - 1 && { borderBottomWidth: 1, borderBottomColor: themedColors.surface.border },
+                      ]}
+                      onPress={() => handleSelectSuggestion(suggestion)}
+                      activeOpacity={0.6}
+                    >
+                      <Ionicons name="location-outline" size={18} color={themedColors.text.tertiary} style={styles.suggestionIcon} />
+                      <View style={styles.suggestionText}>
+                        <Text style={[styles.suggestionMain, { color: themedColors.text.primary }]} numberOfLines={1}>
+                          {suggestion.mainText}
+                        </Text>
+                        {suggestion.secondaryText ? (
+                          <Text style={[styles.suggestionSecondary, { color: themedColors.text.tertiary }]} numberOfLines={1}>
+                            {suggestion.secondaryText}
+                          </Text>
+                        ) : null}
+                      </View>
+                    </TouchableOpacity>
+                  ))
+                ) : (
+                  <View style={styles.suggestionsLoading}>
+                    <Text style={[styles.suggestionsLoadingText, { color: themedColors.text.tertiary }]}>
+                      No results found
+                    </Text>
+                  </View>
+                )}
+              </View>
+            )}
+
             <Text style={[styles.formHint, { color: themedColors.text.muted }]}>
-              Tap the location button to use your current location
+              Type to search or tap the location button for current location
             </Text>
           </View>
 
@@ -1065,6 +1141,43 @@ const styles = StyleSheet.create({
     borderRadius: borderRadius.lg,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  suggestionsContainer: {
+    marginTop: spacing[1],
+    borderRadius: borderRadius.lg,
+    borderWidth: 1,
+    overflow: 'hidden',
+    maxHeight: 240,
+  },
+  suggestionsLoading: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing[2],
+    paddingVertical: spacing[3],
+  },
+  suggestionsLoadingText: {
+    fontSize: typography.fontSize.sm,
+  },
+  suggestionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: spacing[3],
+    paddingHorizontal: spacing[3],
+  },
+  suggestionIcon: {
+    marginRight: spacing[2],
+  },
+  suggestionText: {
+    flex: 1,
+  },
+  suggestionMain: {
+    fontSize: typography.fontSize.sm,
+    fontWeight: typography.fontWeight.medium,
+  },
+  suggestionSecondary: {
+    fontSize: typography.fontSize.xs,
+    marginTop: 2,
   },
   toggleRow: {
     flexDirection: 'row',

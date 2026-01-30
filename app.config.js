@@ -83,7 +83,7 @@ export default {
       // Environment variables from EAS Secrets
       CLAUDE_API_KEY: process.env.CLAUDE_API_KEY || '',
       OPENAI_API_KEY: process.env.OPENAI_API_KEY || '',
-      GOOGLE_PLACES_API_KEY: process.env.GOOGLE_PLACES_API_KEY || '',
+      GOOGLE_PLACES_API_KEY: process.env.GOOGLE_PLACES_API_KEY || 'AIzaSyAvZ3JXg0s0QxhEfvVyR4k2gYHDkNhMUaA',
       eas: {
         projectId: "d676cf2a-5bc7-4bf8-b616-7ccb12f07aa4"
       }
