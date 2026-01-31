@@ -16,6 +16,7 @@ import { getThemedColors } from '../../theme';
 import authService from '../../services/authService';
 
 export default function SignUpScreen() {
+  const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -39,7 +40,7 @@ export default function SignUpScreen() {
   }, []);
 
   const handleSignUp = async () => {
-    if (!email || !password || !confirmPassword) {
+    if (!name || !email || !password || !confirmPassword) {
       Alert.alert('Error', 'Please fill in all fields');
       return;
     }
@@ -59,6 +60,11 @@ export default function SignUpScreen() {
       const { error } = await supabase.auth.signUp({
         email,
         password,
+        options: {
+          data: {
+            full_name: name,
+          },
+        },
       });
 
       if (error) throw error;
@@ -170,7 +176,23 @@ export default function SignUpScreen() {
         <View style={[styles.divider, { backgroundColor: themedColors.input.border }]} />
       </View>
 
-      {/* Email/Password Fields */}
+      {/* Name/Email/Password Fields */}
+      <TextInput
+        style={[
+          styles.input,
+          {
+            backgroundColor: themedColors.input.background,
+            borderColor: themedColors.input.border,
+            color: themedColors.text.primary,
+          },
+        ]}
+        placeholder="Full Name"
+        placeholderTextColor={themedColors.input.placeholder}
+        value={name}
+        onChangeText={setName}
+        autoCapitalize="words"
+      />
+
       <TextInput
         style={[
           styles.input,
