@@ -45,7 +45,7 @@ import TopBar from '../../components/common/TopBar';
 // Services
 import voiceService, { isGarbageTranscription, EMPTY_TRANSCRIPTION_PLACEHOLDER } from '../../services/voiceService';
 import speechRecognitionService, { useSpeechRecognitionEvent } from '../../services/speechRecognitionService';
-import { createNoteWithReminder, getNotes, updateNoteTags, deleteNote } from '../../services/notesService';
+import { createNoteWithReminder, getNotes, updateNoteTags, deleteNote, NoteType } from '../../services/notesService';
 import soundService from '../../services/soundService';
 import notificationService from '../../services/notificationService';
 import reminderService from '../../services/reminderService';
@@ -219,6 +219,19 @@ export default function HomeScreen() {
   // Tag modal state
   const [showTagSheet, setShowTagSheet] = useState(false);
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
+
+  // Filter state
+  type FilterType = 'all' | 'tasks' | 'reminders' | 'journal';
+  const [activeFilter, setActiveFilter] = useState<FilterType>('all');
+
+  // Filter notes based on active filter
+  const filteredNotes = notes.filter((note: any) => {
+    if (activeFilter === 'all') return true;
+    if (activeFilter === 'journal') return note.note_type === 'journal';
+    if (activeFilter === 'tasks') return note.note_type === 'task' && !note.is_reminder;
+    if (activeFilter === 'reminders') return note.is_reminder || note.note_type === 'reminder';
+    return true;
+  });
 
   // Onboarding state
   const [showOnboardingBanner, setShowOnboardingBanner] = useState(false);
@@ -404,7 +417,7 @@ export default function HomeScreen() {
         setNotes([newNote, ...notes]);
         await soundService.playSuccess();
       } else {
-        await createNoteWithReminder({ transcript: text });
+        await createNoteWithReminder({ transcript: text, inputMethod: 'text' });
         await loadNotes();
         await soundService.playSuccess();
       }
@@ -514,7 +527,7 @@ export default function HomeScreen() {
     }
   };
 
-  const handleSaveTranscription = async (text: string, reminderDate?: Date) => {
+  const handleSaveTranscription = async (text: string, reminderDate?: Date, noteType?: NoteType) => {
     try {
       if (DEMO_MODE) {
         const newNote: Note = {
@@ -535,6 +548,8 @@ export default function HomeScreen() {
           audioUrl: currentAudioUri || undefined,
           customReminderTime: reminderDate,
           forceReminder: !!reminderDate,
+          noteType: noteType,
+          inputMethod: 'voice',
         });
         await loadNotes();
       }
@@ -721,11 +736,64 @@ export default function HomeScreen() {
         </View>
       </View>
 
+      {/* Filter Tabs */}
+      <View style={styles.filterContainer}>
+        <Animated.ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.filterScrollContent}
+        >
+          {(['all', 'tasks', 'reminders', 'journal'] as FilterType[]).map((filter) => {
+            const isActive = activeFilter === filter;
+            const filterLabels: Record<FilterType, { label: string; icon: string }> = {
+              all: { label: 'All', icon: 'apps-outline' },
+              tasks: { label: 'Tasks', icon: 'checkbox-outline' },
+              reminders: { label: 'Reminders', icon: 'notifications-outline' },
+              journal: { label: 'Journal', icon: 'book-outline' },
+            };
+            const { label, icon } = filterLabels[filter];
+
+            return (
+              <AnimatedPressable
+                key={filter}
+                onPress={() => {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  setActiveFilter(filter);
+                }}
+                style={[
+                  styles.filterTab,
+                  isActive && styles.filterTabActive,
+                  isActive && { backgroundColor: colors.primary[500] },
+                  !isActive && { backgroundColor: themedColors.surface.secondary },
+                ]}
+                hapticType="light"
+              >
+                <Ionicons
+                  name={icon as any}
+                  size={16}
+                  color={isActive ? colors.neutral[0] : themedColors.text.secondary}
+                />
+                <Text
+                  style={[
+                    styles.filterTabText,
+                    { color: isActive ? colors.neutral[0] : themedColors.text.secondary },
+                  ]}
+                >
+                  {label}
+                </Text>
+              </AnimatedPressable>
+            );
+          })}
+        </Animated.ScrollView>
+      </View>
+
       {/* Notes List */}
       <View style={styles.notesSection}>
         <View style={styles.sectionHeader}>
-          <Text style={[styles.sectionTitle, { color: themedColors.text.primary }]}>Recent Notes</Text>
-          <Text style={[styles.noteCount, { color: themedColors.text.tertiary }]}>{notes.length} notes</Text>
+          <Text style={[styles.sectionTitle, { color: themedColors.text.primary }]}>
+            {activeFilter === 'all' ? 'Recent Notes' : activeFilter === 'journal' ? 'Journal Entries' : activeFilter === 'tasks' ? 'Tasks' : 'Reminders'}
+          </Text>
+          <Text style={[styles.noteCount, { color: themedColors.text.tertiary }]}>{filteredNotes.length} {filteredNotes.length === 1 ? 'note' : 'notes'}</Text>
         </View>
 
         {loading ? (
@@ -745,10 +813,18 @@ export default function HomeScreen() {
               />
             }
           >
-            {notes.length === 0 ? (
-              <EmptyState onRecord={handleRecordingStart} themedColors={themedColors} />
+            {filteredNotes.length === 0 ? (
+              activeFilter === 'all' ? (
+                <EmptyState onRecord={handleRecordingStart} themedColors={themedColors} />
+              ) : (
+                <View style={styles.emptyFilterState}>
+                  <Text style={[styles.emptyFilterText, { color: themedColors.text.tertiary }]}>
+                    No {activeFilter === 'journal' ? 'journal entries' : activeFilter} yet
+                  </Text>
+                </View>
+              )
             ) : (
-              notes.map((note, index) => (
+              filteredNotes.map((note, index) => (
                 <NoteCard
                   key={note.id}
                   note={note}
@@ -989,6 +1065,35 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  filterContainer: {
+    marginBottom: spacing[3],
+  },
+  filterScrollContent: {
+    paddingHorizontal: spacing[5],
+    gap: spacing[2],
+  },
+  filterTab: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing[1],
+    paddingHorizontal: spacing[3],
+    paddingVertical: spacing[2],
+    borderRadius: borderRadius.full,
+  },
+  filterTabActive: {
+    // Active styles handled inline
+  },
+  filterTabText: {
+    fontSize: typography.fontSize.sm,
+    fontWeight: typography.fontWeight.medium,
+  },
+  emptyFilterState: {
+    paddingVertical: spacing[10],
+    alignItems: 'center',
+  },
+  emptyFilterText: {
+    fontSize: typography.fontSize.base,
   },
   notesSection: {
     flex: 1,

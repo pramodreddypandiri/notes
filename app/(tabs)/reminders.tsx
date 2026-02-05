@@ -1,12 +1,12 @@
 /**
- * Reminders Tab - View and manage reminders
+ * Tasks Tab - View and manage tasks/reminders
  *
  * Features:
- * - Today's reminders (pending and completed)
- * - Mark reminders as done
- * - Edit reminder dates
- * - Delete reminders
- * - Upcoming reminders preview
+ * - Today's tasks (pending and completed)
+ * - Mark tasks as done
+ * - Edit task dates
+ * - Delete tasks
+ * - Task reminders shown here so users don't miss notifications
  */
 
 import React, { useState, useCallback } from 'react';
@@ -69,12 +69,12 @@ export default function RemindersScreen() {
         {
           title: 'Today',
           data: pending,
-          emptyMessage: 'No reminders for today',
+          emptyMessage: 'No tasks for today',
         },
         {
           title: 'Completed',
           data: completed,
-          emptyMessage: 'No completed reminders',
+          emptyMessage: 'No completed tasks',
         },
       ]);
     } catch (error) {
@@ -111,15 +111,15 @@ export default function RemindersScreen() {
     }
   };
 
-  // Delete reminder
+  // Delete task
   const handleDelete = (reminder: TodaysReminder) => {
     const isOneTime = reminder.note.reminder_type === 'one-time';
 
     Alert.alert(
-      'Delete Reminder',
+      'Delete Task',
       isOneTime
-        ? 'This will permanently delete this reminder.'
-        : 'This will delete this recurring reminder. Are you sure?',
+        ? 'This will permanently delete this task.'
+        : 'This will delete this recurring task. Are you sure?',
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -137,12 +137,12 @@ export default function RemindersScreen() {
     );
   };
 
-  // Edit reminder (placeholder - would open a modal)
+  // Edit task (placeholder - would open a modal)
   const handleEdit = (_reminder: TodaysReminder) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     Alert.alert(
-      'Edit Reminder',
-      'Edit functionality coming soon. You can delete and recreate the reminder for now.',
+      'Edit Task',
+      'Edit functionality coming soon. You can delete and recreate the task for now.',
       [{ text: 'OK' }]
     );
   };
@@ -309,15 +309,15 @@ export default function RemindersScreen() {
           { backgroundColor: colors.primary[50] },
         ]}
       >
-        <Ionicons name="notifications-outline" size={48} color={colors.primary[400]} />
+        <Ionicons name="checkbox-outline" size={48} color={colors.primary[400]} />
       </View>
       <Text style={[styles.emptyTitle, { color: themedColors.text.primary }]}>
-        No Reminders Yet
+        No Tasks Yet
       </Text>
       <Text style={[styles.emptySubtitle, { color: themedColors.text.tertiary }]}>
-        Record a voice note with a reminder like:{'\n'}
+        Record a voice note with a task like:{'\n'}
         "Remind me every Monday to post on LinkedIn"{'\n'}
-        or "Event on Feb 18th, remind me 2 days before"
+        or "Buy groceries tomorrow at 5 PM"
       </Text>
     </Animated.View>
   );
@@ -333,7 +333,7 @@ export default function RemindersScreen() {
       {loading ? (
         <View style={styles.loadingContainer}>
           <Text style={[styles.loadingText, { color: themedColors.text.tertiary }]}>
-            Loading reminders...
+            Loading tasks...
           </Text>
         </View>
       ) : !hasAnyReminders ? (

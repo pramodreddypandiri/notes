@@ -9,8 +9,8 @@
  * - Smooth entrance animation
  */
 
-import React from 'react';
-import { StyleSheet, View, Text } from 'react-native';
+import React, { useState } from 'react';
+import { StyleSheet, View, Text, Linking } from 'react-native';
 import Animated, {
   useAnimatedStyle,
   useSharedValue,
@@ -30,6 +30,19 @@ import { useTheme } from '../../context/ThemeContext';
 import notificationService from '../../services/notificationService';
 
 type NoteTag = 'reminder' | 'preference' | 'my_type' | 'my_vibe';
+type NoteType = 'journal' | 'task' | 'reminder';
+
+interface EnrichmentLink {
+  title: string;
+  url: string;
+  source: string;
+}
+
+interface EnrichmentData {
+  links?: EnrichmentLink[];
+  tips?: string[];
+  estimatedDuration?: number;
+}
 
 interface Note {
   id: string;
@@ -41,7 +54,16 @@ interface Note {
   created_at: string;
   tags?: NoteTag[];
   reminder_time?: string;
+  note_type?: NoteType;
+  is_reminder?: boolean;
+  enrichment_data?: EnrichmentData;
 }
+
+const NOTE_TYPE_CONFIG: Record<NoteType, { label: string; icon: string; color: typeof colors.accent.violet }> = {
+  journal: { label: 'Journal', icon: 'book-outline', color: colors.accent.violet },
+  task: { label: 'Task', icon: 'checkbox-outline', color: colors.accent.emerald },
+  reminder: { label: 'Reminder', icon: 'notifications-outline', color: colors.accent.rose },
+};
 
 interface NoteCardProps {
   note: Note;
@@ -75,6 +97,96 @@ const TAG_LABELS: Record<NoteTag, string> = {
   my_type: 'My Type',
   my_vibe: 'My Vibe',
 };
+
+// Enrichment Section Component
+function EnrichmentSection({
+  enrichment,
+  themedColors,
+  isDark,
+}: {
+  enrichment: EnrichmentData;
+  themedColors: ReturnType<typeof getThemedColors>;
+  isDark: boolean;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const hasLinks = enrichment.links && enrichment.links.length > 0;
+  const hasTips = enrichment.tips && enrichment.tips.length > 0;
+
+  const handleLinkPress = (url: string) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    Linking.openURL(url).catch(err => console.error('Failed to open URL:', err));
+  };
+
+  return (
+    <View style={styles.enrichmentContainer}>
+      <AnimatedPressable
+        onPress={() => {
+          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+          setExpanded(!expanded);
+        }}
+        style={[styles.enrichmentHeader, { backgroundColor: isDark ? colors.primary[900] + '30' : colors.primary[50] }]}
+        hapticType="light"
+      >
+        <View style={styles.enrichmentHeaderContent}>
+          <Ionicons name="bulb-outline" size={14} color={colors.primary[500]} />
+          <Text style={[styles.enrichmentHeaderText, { color: colors.primary[600] }]}>
+            {hasLinks ? `${enrichment.links!.length} link${enrichment.links!.length > 1 ? 's' : ''}` : ''}
+            {hasLinks && hasTips ? ' · ' : ''}
+            {hasTips ? `${enrichment.tips!.length} tip${enrichment.tips!.length > 1 ? 's' : ''}` : ''}
+            {enrichment.estimatedDuration ? ` · ~${enrichment.estimatedDuration} min` : ''}
+          </Text>
+        </View>
+        <Ionicons
+          name={expanded ? 'chevron-up' : 'chevron-down'}
+          size={16}
+          color={colors.primary[500]}
+        />
+      </AnimatedPressable>
+
+      {expanded && (
+        <View style={styles.enrichmentContent}>
+          {/* Links */}
+          {hasLinks && (
+            <View style={styles.enrichmentLinks}>
+              {enrichment.links!.map((link, index) => (
+                <AnimatedPressable
+                  key={index}
+                  onPress={() => handleLinkPress(link.url)}
+                  style={[styles.enrichmentLink, { backgroundColor: themedColors.surface.secondary }]}
+                  hapticType="light"
+                >
+                  <Ionicons
+                    name={link.source === 'amazon' ? 'cart-outline' : 'link-outline'}
+                    size={14}
+                    color={colors.primary[500]}
+                  />
+                  <Text style={[styles.enrichmentLinkText, { color: colors.primary[600] }]} numberOfLines={1}>
+                    {link.title}
+                  </Text>
+                  <Ionicons name="open-outline" size={12} color={themedColors.text.tertiary} />
+                </AnimatedPressable>
+              ))}
+            </View>
+          )}
+
+          {/* Tips */}
+          {hasTips && (
+            <View style={styles.enrichmentTips}>
+              {enrichment.tips!.map((tip, index) => (
+                <View key={index} style={styles.enrichmentTip}>
+                  <Ionicons name="checkmark-circle" size={14} color={colors.accent.emerald.base} />
+                  <Text style={[styles.enrichmentTipText, { color: themedColors.text.secondary }]}>
+                    {tip}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          )}
+        </View>
+      )}
+    </View>
+  );
+}
 
 export function NoteCard({
   note,
@@ -192,13 +304,37 @@ export function NoteCard({
             scaleIntensity="subtle"
           >
             <View style={styles.mainContent}>
-              {/* Note text */}
+              {/* Note text - show original transcript so user recognizes their own words */}
               <Text style={[styles.noteText, { color: themedColors.text.primary }]} numberOfLines={2}>
-                {cleanReminderPrefix(note.parsed_data?.summary || note.transcript)}
+                {cleanReminderPrefix(note.transcript)}
               </Text>
 
-              {/* Timestamp */}
-              <Text style={[styles.timestamp, { color: themedColors.text.tertiary }]}>{formatTime(note.created_at)}</Text>
+              {/* Timestamp and Note Type */}
+              <View style={styles.metaRow}>
+                <Text style={[styles.timestamp, { color: themedColors.text.tertiary }]}>{formatTime(note.created_at)}</Text>
+                {note.note_type && (
+                  <View
+                    style={[
+                      styles.noteTypeBadge,
+                      { backgroundColor: NOTE_TYPE_CONFIG[note.note_type].color.light },
+                    ]}
+                  >
+                    <Ionicons
+                      name={NOTE_TYPE_CONFIG[note.note_type].icon as any}
+                      size={10}
+                      color={NOTE_TYPE_CONFIG[note.note_type].color.base}
+                    />
+                    <Text
+                      style={[
+                        styles.noteTypeText,
+                        { color: NOTE_TYPE_CONFIG[note.note_type].color.dark },
+                      ]}
+                    >
+                      {NOTE_TYPE_CONFIG[note.note_type].label}
+                    </Text>
+                  </View>
+                )}
+              </View>
 
               {/* Tags */}
               {note.tags && note.tags.length > 0 && (
@@ -235,6 +371,11 @@ export function NoteCard({
                   </View>
                 </View>
               )}
+
+              {/* Enrichment Data */}
+              {note.enrichment_data && (note.enrichment_data.links?.length || note.enrichment_data.tips?.length) ? (
+                <EnrichmentSection enrichment={note.enrichment_data} themedColors={themedColors} isDark={isDark} />
+              ) : null}
             </View>
 
             {/* Action buttons */}
@@ -293,9 +434,26 @@ const styles = StyleSheet.create({
     fontWeight: typography.fontWeight.medium,
     lineHeight: typography.fontSize.base * typography.lineHeight.relaxed,
   },
+  metaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing[2],
+    marginTop: spacing[2],
+  },
   timestamp: {
     fontSize: typography.fontSize.xs,
-    marginTop: spacing[2],
+  },
+  noteTypeBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    paddingHorizontal: spacing[2],
+    paddingVertical: 2,
+    borderRadius: borderRadius.full,
+  },
+  noteTypeText: {
+    fontSize: 10,
+    fontWeight: typography.fontWeight.medium,
   },
   tagsContainer: {
     flexDirection: 'row',
@@ -340,6 +498,61 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  // Enrichment styles
+  enrichmentContainer: {
+    marginTop: spacing[3],
+  },
+  enrichmentHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: spacing[3],
+    paddingVertical: spacing[2],
+    borderRadius: borderRadius.md,
+  },
+  enrichmentHeaderContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing[2],
+  },
+  enrichmentHeaderText: {
+    fontSize: typography.fontSize.xs,
+    fontWeight: typography.fontWeight.medium,
+  },
+  enrichmentContent: {
+    marginTop: spacing[2],
+    gap: spacing[2],
+  },
+  enrichmentLinks: {
+    gap: spacing[2],
+  },
+  enrichmentLink: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing[2],
+    paddingHorizontal: spacing[3],
+    paddingVertical: spacing[2],
+    borderRadius: borderRadius.md,
+  },
+  enrichmentLinkText: {
+    flex: 1,
+    fontSize: typography.fontSize.sm,
+    fontWeight: typography.fontWeight.medium,
+  },
+  enrichmentTips: {
+    gap: spacing[2],
+  },
+  enrichmentTip: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: spacing[2],
+    paddingHorizontal: spacing[2],
+  },
+  enrichmentTipText: {
+    flex: 1,
+    fontSize: typography.fontSize.xs,
+    lineHeight: typography.fontSize.xs * typography.lineHeight.relaxed,
   },
 });
 

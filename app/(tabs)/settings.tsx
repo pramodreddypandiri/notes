@@ -38,6 +38,7 @@ import PremiumButton from '../../components/ui/PremiumButton';
 import { supabase } from '../../config/supabase';
 import soundService from '../../services/soundService';
 import { getUserProfile, UserProfile } from '../../services/profileService';
+import preferencesService, { UserPreferences } from '../../services/preferencesService';
 
 // Context
 import { useTheme } from '../../context/ThemeContext';
@@ -45,12 +46,26 @@ import { useTheme } from '../../context/ThemeContext';
 // Router
 import { router } from 'expo-router';
 
+// Notification tone options
+const NOTIFICATION_TONES = [
+  { id: 'default', label: 'Default', icon: 'notifications' },
+  { id: 'gentle', label: 'Gentle', icon: 'water' },
+  { id: 'chime', label: 'Chime', icon: 'musical-note' },
+  { id: 'alert', label: 'Alert', icon: 'alert-circle' },
+] as const;
+
 export default function SettingsScreen() {
   const [city, setCity] = useState('');
   const [loading, setLoading] = useState(false);
   const [user, setUser] = useState<any>(null);
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [profile, setProfile] = useState<UserProfile | null>(null);
+
+  // Active hours preferences
+  const [wakeTime, setWakeTime] = useState('07:00');
+  const [sleepTime, setSleepTime] = useState('22:00');
+  const [notificationTone, setNotificationTone] = useState('default');
+  const [savingPreferences, setSavingPreferences] = useState(false);
 
   // Theme
   const { isDark, themeMode, setThemeMode } = useTheme();
@@ -60,7 +75,43 @@ export default function SettingsScreen() {
     loadUserData();
     loadSoundPreference();
     loadProfile();
+    loadActiveHoursPreferences();
   }, []);
+
+  const loadActiveHoursPreferences = async () => {
+    try {
+      const prefs = await preferencesService.getPreferences();
+      if (prefs) {
+        setWakeTime(prefs.wake_time || '07:00');
+        setSleepTime(prefs.sleep_time || '22:00');
+        setNotificationTone(prefs.notification_tone || 'default');
+      }
+    } catch (error) {
+      console.error('Failed to load active hours preferences:', error);
+    }
+  };
+
+  const handleSaveActiveHours = async () => {
+    setSavingPreferences(true);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+
+    try {
+      await preferencesService.updatePreferences({
+        wake_time: wakeTime,
+        sleep_time: sleepTime,
+        notification_tone: notificationTone,
+      });
+
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      await soundService.playSuccess();
+      Alert.alert('Success', 'Preferences saved successfully');
+    } catch (error) {
+      console.error('Failed to save preferences:', error);
+      Alert.alert('Error', 'Failed to save preferences');
+    } finally {
+      setSavingPreferences(false);
+    }
+  };
 
   const loadProfile = async () => {
     try {
@@ -437,6 +488,174 @@ export default function SettingsScreen() {
           </View>
         </Animated.View>
 
+        {/* Active Hours Section */}
+        <Animated.View
+          entering={FadeInDown.delay(350).springify()}
+          style={styles.section}
+        >
+          <Text style={[styles.sectionTitle, { color: themedColors.text.tertiary }]}>Active Hours</Text>
+          <View style={[styles.card, shadows.md, { backgroundColor: themedColors.surface.primary }]}>
+            <Text style={[styles.activeHoursDescription, { color: themedColors.text.secondary }]}>
+              Set your typical wake and sleep times. We'll only send notifications during these hours.
+            </Text>
+
+            {/* Wake Time */}
+            <View style={styles.timePickerRow}>
+              <View style={styles.timePickerLabel}>
+                <View style={[styles.timeIconContainer, { backgroundColor: colors.accent.amber.light }]}>
+                  <Ionicons name="sunny" size={18} color={colors.accent.amber.base} />
+                </View>
+                <Text style={[styles.timePickerTitle, { color: themedColors.text.primary }]}>Wake Time</Text>
+              </View>
+              <View style={styles.timePickerControls}>
+                <AnimatedPressable
+                  onPress={() => {
+                    const [h, m] = wakeTime.split(':').map(Number);
+                    const newHour = h > 0 ? h - 1 : 23;
+                    setWakeTime(`${String(newHour).padStart(2, '0')}:${String(m).padStart(2, '0')}`);
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  }}
+                  style={[styles.timeButton, { backgroundColor: themedColors.surface.secondary }]}
+                  hapticType="light"
+                >
+                  <Ionicons name="remove" size={18} color={themedColors.text.secondary} />
+                </AnimatedPressable>
+                <View style={[styles.timeDisplay, { backgroundColor: themedColors.input.background, borderColor: themedColors.input.border }]}>
+                  <Text style={[styles.timeText, { color: themedColors.text.primary }]}>
+                    {(() => {
+                      const [h, m] = wakeTime.split(':').map(Number);
+                      const period = h >= 12 ? 'PM' : 'AM';
+                      const hour12 = h % 12 || 12;
+                      return `${hour12}:${String(m).padStart(2, '0')} ${period}`;
+                    })()}
+                  </Text>
+                </View>
+                <AnimatedPressable
+                  onPress={() => {
+                    const [h, m] = wakeTime.split(':').map(Number);
+                    const newHour = h < 23 ? h + 1 : 0;
+                    setWakeTime(`${String(newHour).padStart(2, '0')}:${String(m).padStart(2, '0')}`);
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  }}
+                  style={[styles.timeButton, { backgroundColor: themedColors.surface.secondary }]}
+                  hapticType="light"
+                >
+                  <Ionicons name="add" size={18} color={themedColors.text.secondary} />
+                </AnimatedPressable>
+              </View>
+            </View>
+
+            <View style={[styles.divider, { backgroundColor: themedColors.surface.border }]} />
+
+            {/* Sleep Time */}
+            <View style={styles.timePickerRow}>
+              <View style={styles.timePickerLabel}>
+                <View style={[styles.timeIconContainer, { backgroundColor: colors.accent.violet.light }]}>
+                  <Ionicons name="moon" size={18} color={colors.accent.violet.base} />
+                </View>
+                <Text style={[styles.timePickerTitle, { color: themedColors.text.primary }]}>Sleep Time</Text>
+              </View>
+              <View style={styles.timePickerControls}>
+                <AnimatedPressable
+                  onPress={() => {
+                    const [h, m] = sleepTime.split(':').map(Number);
+                    const newHour = h > 0 ? h - 1 : 23;
+                    setSleepTime(`${String(newHour).padStart(2, '0')}:${String(m).padStart(2, '0')}`);
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  }}
+                  style={[styles.timeButton, { backgroundColor: themedColors.surface.secondary }]}
+                  hapticType="light"
+                >
+                  <Ionicons name="remove" size={18} color={themedColors.text.secondary} />
+                </AnimatedPressable>
+                <View style={[styles.timeDisplay, { backgroundColor: themedColors.input.background, borderColor: themedColors.input.border }]}>
+                  <Text style={[styles.timeText, { color: themedColors.text.primary }]}>
+                    {(() => {
+                      const [h, m] = sleepTime.split(':').map(Number);
+                      const period = h >= 12 ? 'PM' : 'AM';
+                      const hour12 = h % 12 || 12;
+                      return `${hour12}:${String(m).padStart(2, '0')} ${period}`;
+                    })()}
+                  </Text>
+                </View>
+                <AnimatedPressable
+                  onPress={() => {
+                    const [h, m] = sleepTime.split(':').map(Number);
+                    const newHour = h < 23 ? h + 1 : 0;
+                    setSleepTime(`${String(newHour).padStart(2, '0')}:${String(m).padStart(2, '0')}`);
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  }}
+                  style={[styles.timeButton, { backgroundColor: themedColors.surface.secondary }]}
+                  hapticType="light"
+                >
+                  <Ionicons name="add" size={18} color={themedColors.text.secondary} />
+                </AnimatedPressable>
+              </View>
+            </View>
+
+            <View style={[styles.divider, { backgroundColor: themedColors.surface.border }]} />
+
+            {/* Notification Tone */}
+            <View style={styles.toneSection}>
+              <Text style={[styles.toneSectionTitle, { color: themedColors.text.primary }]}>Notification Tone</Text>
+              <View style={styles.toneOptions}>
+                {NOTIFICATION_TONES.map((tone) => (
+                  <AnimatedPressable
+                    key={tone.id}
+                    onPress={() => {
+                      setNotificationTone(tone.id);
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    }}
+                    style={[
+                      styles.toneOption,
+                      {
+                        backgroundColor: notificationTone === tone.id
+                          ? colors.primary[50]
+                          : themedColors.surface.secondary,
+                        borderColor: notificationTone === tone.id
+                          ? colors.primary[500]
+                          : themedColors.surface.border,
+                      },
+                    ]}
+                    hapticType="light"
+                  >
+                    <Ionicons
+                      name={tone.icon as any}
+                      size={20}
+                      color={notificationTone === tone.id ? colors.primary[500] : themedColors.text.tertiary}
+                    />
+                    <Text
+                      style={[
+                        styles.toneLabel,
+                        {
+                          color: notificationTone === tone.id
+                            ? colors.primary[600]
+                            : themedColors.text.secondary,
+                        },
+                      ]}
+                    >
+                      {tone.label}
+                    </Text>
+                  </AnimatedPressable>
+                ))}
+              </View>
+            </View>
+
+            <PremiumButton
+              onPress={handleSaveActiveHours}
+              loading={savingPreferences}
+              fullWidth
+              icon={
+                !savingPreferences ? (
+                  <Ionicons name="checkmark" size={18} color={colors.neutral[0]} />
+                ) : undefined
+              }
+            >
+              Save Preferences
+            </PremiumButton>
+          </View>
+        </Animated.View>
+
         {/* About Section */}
         <Animated.View
           entering={FadeInDown.delay(400).springify()}
@@ -753,5 +972,83 @@ const styles = StyleSheet.create({
   },
   themeOptionActive: {
     backgroundColor: colors.primary[50],
+  },
+  // Active Hours styles
+  activeHoursDescription: {
+    fontSize: typography.fontSize.sm,
+    lineHeight: typography.fontSize.sm * typography.lineHeight.relaxed,
+    marginBottom: spacing[4],
+  },
+  timePickerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: spacing[2],
+  },
+  timePickerLabel: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing[3],
+  },
+  timeIconContainer: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  timePickerTitle: {
+    fontSize: typography.fontSize.base,
+    fontWeight: typography.fontWeight.medium,
+  },
+  timePickerControls: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing[2],
+  },
+  timeButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  timeDisplay: {
+    paddingHorizontal: spacing[3],
+    paddingVertical: spacing[2],
+    borderRadius: borderRadius.md,
+    borderWidth: 1,
+    minWidth: 90,
+    alignItems: 'center',
+  },
+  timeText: {
+    fontSize: typography.fontSize.base,
+    fontWeight: typography.fontWeight.semibold,
+  },
+  toneSection: {
+    marginBottom: spacing[4],
+  },
+  toneSectionTitle: {
+    fontSize: typography.fontSize.base,
+    fontWeight: typography.fontWeight.medium,
+    marginBottom: spacing[3],
+  },
+  toneOptions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing[2],
+  },
+  toneOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing[2],
+    paddingHorizontal: spacing[3],
+    paddingVertical: spacing[2],
+    borderRadius: borderRadius.lg,
+    borderWidth: 1.5,
+  },
+  toneLabel: {
+    fontSize: typography.fontSize.sm,
+    fontWeight: typography.fontWeight.medium,
   },
 });

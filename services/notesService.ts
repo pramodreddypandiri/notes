@@ -3,6 +3,7 @@ import { parseNote, ParsedReminder } from './claudeService';
 import notificationService from './notificationService';
 import reminderService from './reminderService';
 import { searchAndStoreNotePlaces } from './googlePlacesService';
+import taskEnrichmentService from './taskEnrichmentService';
 
 // Keywords that indicate a reminder intent
 const REMINDER_KEYWORDS = [
@@ -64,11 +65,17 @@ const determineTags = (
   return tags;
 };
 
+export type NoteType = 'journal' | 'task' | 'reminder';
+export type NotePriority = 'high' | 'medium' | 'low';
+export type InputMethod = 'voice' | 'text' | 'quick_add';
+
 export interface CreateNoteOptions {
   transcript: string;
   audioUrl?: string;
   forceReminder?: boolean;
   customReminderTime?: Date;
+  noteType?: NoteType;
+  inputMethod?: InputMethod;
 }
 
 export interface CreateNoteResult {
@@ -89,7 +96,7 @@ export const createNote = async (
 export const createNoteWithReminder = async (
   options: CreateNoteOptions
 ): Promise<CreateNoteResult> => {
-  const { transcript, audioUrl, forceReminder, customReminderTime } = options;
+  const { transcript, audioUrl, forceReminder, customReminderTime, noteType, inputMethod } = options;
 
   try {
     // Parse the transcript with Claude
@@ -105,6 +112,24 @@ export const createNoteWithReminder = async (
 
     // Check if this is a new-style reminder (with event date or recurrence)
     const hasNewReminder = parsedData.reminder?.isReminder === true;
+
+    // Determine note type: reminder > task (default)
+    // User can override with noteType param, otherwise auto-detect
+    const effectiveNoteType: NoteType = noteType || (hasNewReminder || isReminder ? 'reminder' : 'task');
+
+    // Calculate priority based on time-sensitivity
+    const calculatePriority = (): NotePriority => {
+      if (parsedData.reminder?.eventDate) {
+        const eventDate = new Date(parsedData.reminder.eventDate + 'T00:00:00');
+        const now = new Date();
+        const hoursUntil = (eventDate.getTime() - now.getTime()) / (1000 * 60 * 60);
+        if (hoursUntil <= 24) return 'high';
+        if (hoursUntil <= 72) return 'medium';
+      }
+      // Location-based tasks get medium priority
+      if (parsedData.locationCategory) return 'medium';
+      return 'low';
+    };
 
     // Prepare note data
     const noteData: any = {
@@ -130,6 +155,10 @@ export const createNoteWithReminder = async (
       // Place intent fields
       place_intent: parsedData.placeIntent?.detected || false,
       place_search_query: parsedData.placeIntent?.searchQuery || null,
+      // Life Assistant fields
+      note_type: effectiveNoteType,
+      priority: calculatePriority(),
+      input_method: inputMethod || 'voice',
     };
 
     let notificationId: string | null = null;
@@ -202,6 +231,15 @@ export const createNoteWithReminder = async (
     if (parsedData.placeIntent?.detected && data) {
       searchAndStoreNotePlaces(data.id, parsedData.placeIntent.searchQuery)
         .catch(err => console.error('Failed to search places for note:', err));
+    }
+
+    // Enrich task in background (only for tasks, not journals)
+    if (data && effectiveNoteType === 'task') {
+      taskEnrichmentService.enrichTaskInBackground(
+        data.id,
+        transcript,
+        parsedData.locationCategory || undefined
+      );
     }
 
     // Schedule reminders using the new reminder service if it's a new-style reminder
@@ -558,6 +596,256 @@ export const getShoppingList = async (): Promise<{ noteId: string; items: string
     }));
   } catch (error) {
     console.error('Failed to get shopping list:', error);
+    return [];
+  }
+};
+
+// ===== LIFE ASSISTANT FUNCTIONS =====
+
+/**
+ * Get notes filtered by type
+ */
+export const getNotesByType = async (
+  noteType: NoteType,
+  limit = 50
+): Promise<any[]> => {
+  try {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return [];
+
+    const { data, error } = await supabase
+      .from('notes')
+      .select('*')
+      .eq('user_id', user.id)
+      .eq('note_type', noteType)
+      .order('created_at', { ascending: false })
+      .limit(limit);
+
+    if (error) throw error;
+    return data || [];
+  } catch (error) {
+    console.error(`Failed to get ${noteType} notes:`, error);
+    return [];
+  }
+};
+
+/**
+ * Get pending tasks (not completed)
+ */
+export const getPendingTasks = async (limit = 50): Promise<any[]> => {
+  try {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return [];
+
+    const { data, error } = await supabase
+      .from('notes')
+      .select('*')
+      .eq('user_id', user.id)
+      .in('note_type', ['task', 'reminder'])
+      .is('completed_at', null)
+      .order('priority', { ascending: true }) // high, medium, low
+      .order('created_at', { ascending: false })
+      .limit(limit);
+
+    if (error) throw error;
+    return data || [];
+  } catch (error) {
+    console.error('Failed to get pending tasks:', error);
+    return [];
+  }
+};
+
+/**
+ * Get completed tasks
+ */
+export const getCompletedTasks = async (
+  days = 7,
+  limit = 50
+): Promise<any[]> => {
+  try {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return [];
+
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - days);
+
+    const { data, error } = await supabase
+      .from('notes')
+      .select('*')
+      .eq('user_id', user.id)
+      .in('note_type', ['task', 'reminder'])
+      .not('completed_at', 'is', null)
+      .gte('completed_at', cutoffDate.toISOString())
+      .order('completed_at', { ascending: false })
+      .limit(limit);
+
+    if (error) throw error;
+    return data || [];
+  } catch (error) {
+    console.error('Failed to get completed tasks:', error);
+    return [];
+  }
+};
+
+/**
+ * Mark a task as completed
+ */
+export const markTaskCompleted = async (noteId: string): Promise<boolean> => {
+  try {
+    const { error } = await supabase
+      .from('notes')
+      .update({ completed_at: new Date().toISOString() })
+      .eq('id', noteId);
+
+    if (error) throw error;
+    return true;
+  } catch (error) {
+    console.error('Failed to mark task completed:', error);
+    return false;
+  }
+};
+
+/**
+ * Mark a task as incomplete (undo completion)
+ */
+export const markTaskIncomplete = async (noteId: string): Promise<boolean> => {
+  try {
+    const { error } = await supabase
+      .from('notes')
+      .update({ completed_at: null })
+      .eq('id', noteId);
+
+    if (error) throw error;
+    return true;
+  } catch (error) {
+    console.error('Failed to mark task incomplete:', error);
+    return false;
+  }
+};
+
+/**
+ * Update note type (e.g., task -> journal)
+ */
+export const updateNoteType = async (
+  noteId: string,
+  newType: NoteType
+): Promise<boolean> => {
+  try {
+    const { error } = await supabase
+      .from('notes')
+      .update({ note_type: newType })
+      .eq('id', noteId);
+
+    if (error) throw error;
+    return true;
+  } catch (error) {
+    console.error('Failed to update note type:', error);
+    return false;
+  }
+};
+
+/**
+ * Update task priority
+ */
+export const updateTaskPriority = async (
+  noteId: string,
+  priority: NotePriority
+): Promise<boolean> => {
+  try {
+    const { error } = await supabase
+      .from('notes')
+      .update({ priority })
+      .eq('id', noteId);
+
+    if (error) throw error;
+    return true;
+  } catch (error) {
+    console.error('Failed to update task priority:', error);
+    return false;
+  }
+};
+
+/**
+ * Save enrichment data for a task
+ */
+export const saveEnrichmentData = async (
+  noteId: string,
+  enrichmentData: {
+    links?: Array<{ title: string; url: string; source: string }>;
+    tips?: string[];
+    estimatedDuration?: number;
+  }
+): Promise<boolean> => {
+  try {
+    const { error } = await supabase
+      .from('notes')
+      .update({ enrichment_data: enrichmentData })
+      .eq('id', noteId);
+
+    if (error) throw error;
+    return true;
+  } catch (error) {
+    console.error('Failed to save enrichment data:', error);
+    return false;
+  }
+};
+
+/**
+ * Get tasks for a specific date (for productivity metrics)
+ */
+export const getTasksForDate = async (date: Date): Promise<any[]> => {
+  try {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return [];
+
+    const startOfDay = new Date(date);
+    startOfDay.setHours(0, 0, 0, 0);
+
+    const endOfDay = new Date(date);
+    endOfDay.setHours(23, 59, 59, 999);
+
+    const { data, error } = await supabase
+      .from('notes')
+      .select('*')
+      .eq('user_id', user.id)
+      .in('note_type', ['task', 'reminder'])
+      .gte('created_at', startOfDay.toISOString())
+      .lte('created_at', endOfDay.toISOString());
+
+    if (error) throw error;
+    return data || [];
+  } catch (error) {
+    console.error('Failed to get tasks for date:', error);
+    return [];
+  }
+};
+
+/**
+ * Get tasks completed on a specific date
+ */
+export const getCompletedTasksForDate = async (date: Date): Promise<any[]> => {
+  try {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return [];
+
+    const startOfDay = new Date(date);
+    startOfDay.setHours(0, 0, 0, 0);
+
+    const endOfDay = new Date(date);
+    endOfDay.setHours(23, 59, 59, 999);
+
+    const { data, error } = await supabase
+      .from('notes')
+      .select('*')
+      .eq('user_id', user.id)
+      .in('note_type', ['task', 'reminder'])
+      .gte('completed_at', startOfDay.toISOString())
+      .lte('completed_at', endOfDay.toISOString());
+
+    if (error) throw error;
+    return data || [];
+  } catch (error) {
+    console.error('Failed to get completed tasks for date:', error);
     return [];
   }
 };

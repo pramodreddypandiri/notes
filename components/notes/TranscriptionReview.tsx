@@ -33,12 +33,13 @@ import ReminderPicker from './ReminderPicker';
 import notificationService from '../../services/notificationService';
 import { EMPTY_TRANSCRIPTION_PLACEHOLDER } from '../../services/voiceService';
 import { colors, typography, spacing, borderRadius, shadows, getThemedColors } from '../../theme';
+import { NoteType } from '../../services/notesService';
 
 interface TranscriptionReviewProps {
   visible: boolean;
   transcription: string;
   isProcessing: boolean;
-  onSave: (text: string, reminderDate?: Date) => void | Promise<void>;
+  onSave: (text: string, reminderDate?: Date, noteType?: NoteType) => void | Promise<void>;
   onReRecord: () => void;
   onCancel: () => void;
   themedColors: ReturnType<typeof getThemedColors>;
@@ -58,6 +59,7 @@ export function TranscriptionReview({
   const [showReminderPicker, setShowReminderPicker] = useState(false);
   const [customReminderDate, setCustomReminderDate] = useState<Date | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [noteType, setNoteType] = useState<NoteType>('task');
 
   // Check if this is an empty recording
   const isEmptyRecording = transcription === EMPTY_TRANSCRIPTION_PLACEHOLDER;
@@ -69,6 +71,7 @@ export function TranscriptionReview({
     setIsEditing(false);
     setCustomReminderDate(null);
     setIsSaving(false);
+    setNoteType('task'); // Reset to task for new recordings
   }, [transcription, isEmptyRecording]);
 
   // Get the active reminder display (only custom - auto-detection happens after saving)
@@ -83,7 +86,7 @@ export function TranscriptionReview({
       setIsSaving(true);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       try {
-        await onSave(editedText.trim(), activeReminder?.date);
+        await onSave(editedText.trim(), activeReminder?.date, noteType);
       } catch {
         setIsSaving(false);
       }
@@ -116,7 +119,7 @@ export function TranscriptionReview({
       setIsSaving(true);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       try {
-        await onSave(editedText.trim(), date);
+        await onSave(editedText.trim(), date, noteType);
       } catch {
         setIsSaving(false);
       }
@@ -252,8 +255,69 @@ export function TranscriptionReview({
                   Tap to edit the transcription before saving
                 </Text>
 
-                {/* Reminder Section - only shows custom reminder set by user */}
-                {activeReminder ? (
+                {/* Note Type Selector */}
+                <View style={[styles.noteTypeContainer, { opacity: isSaving ? 0.5 : 1 }]}>
+                  <AnimatedPressable
+                    onPress={() => {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      setNoteType('task');
+                    }}
+                    style={[
+                      styles.noteTypeButton,
+                      noteType === 'task' && styles.noteTypeButtonActive,
+                      noteType === 'task' && { backgroundColor: colors.primary[500] },
+                      noteType !== 'task' && { backgroundColor: themedColors.surface.secondary },
+                    ]}
+                    hapticType="light"
+                    disabled={isSaving}
+                  >
+                    <Ionicons
+                      name="checkbox-outline"
+                      size={18}
+                      color={noteType === 'task' ? colors.neutral[0] : themedColors.text.secondary}
+                    />
+                    <Text
+                      style={[
+                        styles.noteTypeText,
+                        { color: noteType === 'task' ? colors.neutral[0] : themedColors.text.secondary },
+                      ]}
+                    >
+                      Task
+                    </Text>
+                  </AnimatedPressable>
+
+                  <AnimatedPressable
+                    onPress={() => {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      setNoteType('journal');
+                    }}
+                    style={[
+                      styles.noteTypeButton,
+                      noteType === 'journal' && styles.noteTypeButtonActive,
+                      noteType === 'journal' && { backgroundColor: colors.accent.violet.base },
+                      noteType !== 'journal' && { backgroundColor: themedColors.surface.secondary },
+                    ]}
+                    hapticType="light"
+                    disabled={isSaving}
+                  >
+                    <Ionicons
+                      name="book-outline"
+                      size={18}
+                      color={noteType === 'journal' ? colors.neutral[0] : themedColors.text.secondary}
+                    />
+                    <Text
+                      style={[
+                        styles.noteTypeText,
+                        { color: noteType === 'journal' ? colors.neutral[0] : themedColors.text.secondary },
+                      ]}
+                    >
+                      Journal
+                    </Text>
+                  </AnimatedPressable>
+                </View>
+
+                {/* Reminder Section - only shows for tasks, hidden for journal */}
+                {noteType === 'task' && activeReminder ? (
                   // Custom reminder set by user
                   <View style={[styles.reminderSection, { backgroundColor: colors.accent.rose.light }]}>
                     <View style={styles.reminderContent}>
@@ -284,8 +348,8 @@ export function TranscriptionReview({
                       </AnimatedPressable>
                     </View>
                   </View>
-                ) : (
-                  // Add reminder option
+                ) : noteType === 'task' ? (
+                  // Add reminder option (only for tasks)
                   <AnimatedPressable
                     onPress={handleReminderPress}
                     style={[styles.addReminderButton, { backgroundColor: themedColors.surface.secondary, opacity: isSaving ? 0.5 : 1 }]}
@@ -297,7 +361,7 @@ export function TranscriptionReview({
                       Add reminder
                     </Text>
                   </AnimatedPressable>
-                )}
+                ) : null}
 
                 {/* Action buttons */}
                 <View style={styles.actions}>
@@ -325,7 +389,7 @@ export function TranscriptionReview({
                       disabled={editedText.trim().length === 0 || isSaving}
                       icon={!isSaving ? <Ionicons name="checkmark" size={20} color={colors.neutral[0]} /> : undefined}
                     >
-                      {isSaving ? 'Saving.....' : activeReminder ? 'Save with Reminder' : 'Save Note'}
+                      {isSaving ? 'Saving.....' : activeReminder ? 'Save with Reminder' : noteType === 'journal' ? 'Save Journal' : 'Save Task'}
                     </PremiumButton>
                   </View>
                 </View>
@@ -400,7 +464,28 @@ const styles = StyleSheet.create({
   hint: {
     fontSize: typography.fontSize.sm,
     marginTop: spacing[2],
+    marginBottom: spacing[3],
+  },
+  noteTypeContainer: {
+    flexDirection: 'row',
+    gap: spacing[2],
     marginBottom: spacing[4],
+  },
+  noteTypeButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing[2],
+    paddingVertical: 10,
+    borderRadius: borderRadius.lg,
+  },
+  noteTypeButtonActive: {
+    // Active state styles handled inline
+  },
+  noteTypeText: {
+    fontSize: typography.fontSize.sm,
+    fontWeight: typography.fontWeight.medium,
   },
   reminderSection: {
     flexDirection: 'row',

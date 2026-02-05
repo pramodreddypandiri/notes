@@ -73,10 +73,10 @@ export default function TabLayout() {
       <Tabs.Screen
         name="reminders"
         options={{
-          title: 'Reminders',
+          title: 'Tasks',
           tabBarIcon: ({ color, focused }) => (
             <TabIcon
-              name={focused ? 'notifications' : 'notifications-outline'}
+              name={focused ? 'checkbox' : 'checkbox-outline'}
               color={color}
               focused={focused}
             />
