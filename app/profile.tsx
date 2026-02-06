@@ -1,5 +1,5 @@
 /**
- * Profile Screen - Combined settings and profile management
+ * Profile/ Settings Screen - Combined settings and profile management
  *
  * Features:
  * - User account info
@@ -20,6 +20,10 @@ import {
   Alert,
   Switch,
   StatusBar,
+  Modal,
+  TouchableWithoutFeedback,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
@@ -29,7 +33,7 @@ import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 // Theme
-import { colors, typography, spacing, borderRadius, shadows, layout, getThemedColors } from '../theme';
+import { colors, typography, spacing, borderRadius, shadows, getThemedColors } from '../theme';
 
 // Components
 import AnimatedPressable from '../components/ui/AnimatedPressable';
@@ -39,6 +43,8 @@ import PremiumButton from '../components/ui/PremiumButton';
 import { supabase } from '../config/supabase';
 import soundService from '../services/soundService';
 import { getUserProfile, UserProfile } from '../services/profileService';
+import authService from '../services/authService';
+import preferencesService, { UserPreferences, NotificationTone } from '../services/preferencesService';
 
 // Context
 import { useTheme } from '../context/ThemeContext';
@@ -50,6 +56,22 @@ export default function ProfileScreen() {
   const [user, setUser] = useState<any>(null);
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [preferences, setPreferences] = useState<UserPreferences | null>(null);
+
+  // Account management state
+  const [showPasswordModal, setShowPasswordModal] = useState(false);
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [accountLoading, setAccountLoading] = useState(false);
+
+  // Check if user signed in with email/password (not OAuth)
+  const isEmailUser = user?.app_metadata?.provider === 'email' ||
+    user?.identities?.some((identity: any) => identity.provider === 'email');
+
+  // Preferences state
+  const [wakeTime, setWakeTime] = useState('07:00');
+  const [sleepTime, setSleepTime] = useState('22:00');
+  const [notificationTone, setNotificationTone] = useState<NotificationTone>('friendly');
 
   // Theme
   const { isDark, themeMode, setThemeMode } = useTheme();
@@ -59,6 +81,7 @@ export default function ProfileScreen() {
     loadUserData();
     loadSoundPreference();
     loadProfile();
+    loadPreferences();
   }, []);
 
   const loadProfile = async () => {
@@ -67,6 +90,85 @@ export default function ProfileScreen() {
       setProfile(userProfile);
     } catch (error) {
       console.error('Failed to load profile:', error);
+    }
+  };
+
+  const loadPreferences = async () => {
+    try {
+      const prefs = await preferencesService.getPreferences();
+      if (prefs) {
+        setPreferences(prefs);
+        setWakeTime(prefs.wake_time);
+        setSleepTime(prefs.sleep_time);
+        setNotificationTone(prefs.notification_tone);
+      }
+    } catch (error) {
+      console.error('Failed to load preferences:', error);
+    }
+  };
+
+  const handleChangePassword = async () => {
+    if (newPassword.length < 6) {
+      Alert.alert('Error', 'Password must be at least 6 characters');
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      Alert.alert('Error', 'Passwords do not match');
+      return;
+    }
+
+    setAccountLoading(true);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+
+    const result = await authService.changePassword(newPassword);
+
+    setAccountLoading(false);
+
+    if (result.success) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      Alert.alert('Success', 'Password changed successfully');
+      setShowPasswordModal(false);
+      setNewPassword('');
+      setConfirmPassword('');
+    } else {
+      Alert.alert('Error', result.error || 'Failed to change password');
+    }
+  };
+
+  const handleDeleteAccount = () => {
+    Alert.alert(
+      'Delete Account',
+      'Are you sure you want to delete your account? This action cannot be undone and all your data will be permanently deleted.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+            const result = await authService.deleteAccount();
+            if (result.success) {
+              Alert.alert('Account Deleted', 'Your account and all data have been deleted.');
+            } else {
+              Alert.alert('Error', result.error || 'Failed to delete account');
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const handleUpdatePreference = async (key: string, value: any) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+
+    const updates = { [key]: value };
+    const result = await preferencesService.updatePreferences(updates);
+
+    if (result) {
+      setPreferences(result);
+      if (key === 'wake_time') setWakeTime(value);
+      if (key === 'sleep_time') setSleepTime(value);
+      if (key === 'notification_tone') setNotificationTone(value);
     }
   };
 
@@ -183,7 +285,7 @@ export default function ProfileScreen() {
         >
           <Ionicons name="chevron-back" size={24} color={themedColors.text.primary} />
         </AnimatedPressable>
-        <Text style={[styles.headerTitle, { color: themedColors.text.primary }]}>Profile & Settings</Text>
+        <Text style={[styles.headerTitle, { color: themedColors.text.primary }]}>Settings</Text>
         <View style={styles.headerRight} />
       </View>
 
@@ -207,15 +309,51 @@ export default function ProfileScreen() {
                     style={styles.avatar}
                   >
                     <Text style={styles.avatarText}>
-                      {user.email?.charAt(0).toUpperCase() || 'U'}
+                      {user.user_metadata?.full_name?.charAt(0).toUpperCase() || user.email?.charAt(0).toUpperCase() || 'U'}
                     </Text>
                   </LinearGradient>
                 </View>
                 <View style={styles.accountInfo}>
-                  <Text style={[styles.accountEmail, { color: themedColors.text.primary }]}>{user.email}</Text>
-                  <Text style={[styles.accountLabel, { color: themedColors.text.tertiary }]}>Signed in</Text>
+                  <Text style={[styles.accountEmail, { color: themedColors.text.primary }]}>
+                    {user.user_metadata?.full_name || user.email}
+                  </Text>
+                  <Text style={[styles.accountLabel, { color: themedColors.text.tertiary }]}>{user.email}</Text>
                 </View>
               </View>
+
+              {/* Only show password change for email/password users, not OAuth */}
+              {isEmailUser && (
+                <>
+                  <View style={[styles.divider, { backgroundColor: themedColors.surface.border }]} />
+
+                  <SettingsRow
+                    icon="lock-closed-outline"
+                    title="Change Password"
+                    description="Update your password"
+                    themedColors={themedColors}
+                    trailing={
+                      <Ionicons name="chevron-forward" size={20} color={themedColors.text.muted} />
+                    }
+                    onPress={() => {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      setShowPasswordModal(true);
+                    }}
+                  />
+                </>
+              )}
+
+              <View style={[styles.divider, { backgroundColor: themedColors.surface.border }]} />
+
+              <SettingsRow
+                icon="trash-outline"
+                title="Delete Account"
+                description="Permanently delete your account"
+                themedColors={themedColors}
+                trailing={
+                  <Ionicons name="chevron-forward" size={20} color={colors.semantic.error} />
+                }
+                onPress={handleDeleteAccount}
+              />
             </View>
           </Animated.View>
         )}
@@ -340,9 +478,135 @@ export default function ProfileScreen() {
           </View>
         </Animated.View>
 
-        {/* App Settings Section */}
+        {/* User Preferences Section */}
         <Animated.View
           entering={FadeInDown.delay(250).springify()}
+          style={styles.section}
+        >
+          <Text style={[styles.sectionTitle, { color: themedColors.text.tertiary }]}>Preferences</Text>
+          <View style={[styles.card, shadows.md, { backgroundColor: themedColors.surface.primary }]}>
+            <SettingsRow
+              icon="sunny-outline"
+              title="Wake Time"
+              description="When your day starts"
+              themedColors={themedColors}
+              trailing={
+                <View style={styles.timeSelector}>
+                  {['06:00', '07:00', '08:00', '09:00'].map((time) => (
+                    <AnimatedPressable
+                      key={time}
+                      onPress={() => handleUpdatePreference('wake_time', time)}
+                      style={[
+                        styles.timeOption,
+                        wakeTime === time && styles.timeOptionActive,
+                        { borderColor: wakeTime === time ? colors.primary[500] : themedColors.surface.border },
+                      ]}
+                      hapticType="light"
+                    >
+                      <Text
+                        style={[
+                          styles.timeOptionText,
+                          { color: wakeTime === time ? colors.primary[500] : themedColors.text.tertiary },
+                        ]}
+                      >
+                        {time.replace(':00', '')}
+                      </Text>
+                    </AnimatedPressable>
+                  ))}
+                </View>
+              }
+            />
+
+            <View style={[styles.divider, { backgroundColor: themedColors.surface.border }]} />
+
+            <SettingsRow
+              icon="moon-outline"
+              title="Sleep Time"
+              description="When your day ends"
+              themedColors={themedColors}
+              trailing={
+                <View style={styles.timeSelector}>
+                  {['21:00', '22:00', '23:00', '00:00'].map((time) => (
+                    <AnimatedPressable
+                      key={time}
+                      onPress={() => handleUpdatePreference('sleep_time', time)}
+                      style={[
+                        styles.timeOption,
+                        sleepTime === time && styles.timeOptionActive,
+                        { borderColor: sleepTime === time ? colors.primary[500] : themedColors.surface.border },
+                      ]}
+                      hapticType="light"
+                    >
+                      <Text
+                        style={[
+                          styles.timeOptionText,
+                          { color: sleepTime === time ? colors.primary[500] : themedColors.text.tertiary },
+                        ]}
+                      >
+                        {time === '00:00' ? '12' : time.replace(':00', '')}
+                      </Text>
+                    </AnimatedPressable>
+                  ))}
+                </View>
+              }
+            />
+
+            <View style={[styles.divider, { backgroundColor: themedColors.surface.border }]} />
+
+            <View style={styles.toneSection}>
+              <View style={styles.toneLabelRow}>
+                <View style={styles.settingsRowIcon}>
+                  <Ionicons name="chatbubble-outline" size={22} color={colors.primary[500]} />
+                </View>
+                <View style={styles.settingsRowContent}>
+                  <Text style={[styles.settingsRowTitle, { color: themedColors.text.primary }]}>Notification Tone</Text>
+                  <Text style={[styles.settingsRowDescription, { color: themedColors.text.tertiary }]}>
+                    How reminders sound
+                  </Text>
+                </View>
+              </View>
+              <View style={styles.toneOptions}>
+                {([
+                  { value: 'friendly', label: 'Friendly', icon: 'happy-outline' },
+                  { value: 'neutral', label: 'Neutral', icon: 'remove-outline' },
+                  { value: 'motivational', label: 'Motivational', icon: 'flame-outline' },
+                ] as const).map((tone) => (
+                  <AnimatedPressable
+                    key={tone.value}
+                    onPress={() => handleUpdatePreference('notification_tone', tone.value)}
+                    style={[
+                      styles.toneOption,
+                      notificationTone === tone.value && styles.toneOptionActive,
+                      {
+                        borderColor: notificationTone === tone.value ? colors.primary[500] : themedColors.surface.border,
+                        backgroundColor: notificationTone === tone.value ? colors.primary[50] : 'transparent',
+                      },
+                    ]}
+                    hapticType="light"
+                  >
+                    <Ionicons
+                      name={tone.icon as any}
+                      size={20}
+                      color={notificationTone === tone.value ? colors.primary[500] : themedColors.text.tertiary}
+                    />
+                    <Text
+                      style={[
+                        styles.toneOptionText,
+                        { color: notificationTone === tone.value ? colors.primary[500] : themedColors.text.secondary },
+                      ]}
+                    >
+                      {tone.label}
+                    </Text>
+                  </AnimatedPressable>
+                ))}
+              </View>
+            </View>
+          </View>
+        </Animated.View>
+
+        {/* App Settings Section */}
+        <Animated.View
+          entering={FadeInDown.delay(300).springify()}
           style={styles.section}
         >
           <Text style={[styles.sectionTitle, { color: themedColors.text.tertiary }]}>App Settings</Text>
@@ -505,6 +769,88 @@ export default function ProfileScreen() {
         {/* Bottom spacing */}
         <View style={[styles.bottomSpacer, { paddingBottom: insets.bottom }]} />
       </ScrollView>
+
+      {/* Change Password Modal */}
+      <Modal
+        visible={showPasswordModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowPasswordModal(false)}
+      >
+        <TouchableWithoutFeedback onPress={() => setShowPasswordModal(false)}>
+          <View style={styles.modalOverlay}>
+            <TouchableWithoutFeedback>
+              <KeyboardAvoidingView
+                behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+              >
+                <View style={[styles.modalContent, { backgroundColor: themedColors.surface.primary }]}>
+                  <Text style={[styles.modalTitle, { color: themedColors.text.primary }]}>
+                    Change Password
+                  </Text>
+
+                  <TextInput
+                    style={[
+                      styles.modalInput,
+                      {
+                        backgroundColor: themedColors.input.background,
+                        borderColor: themedColors.input.border,
+                        color: themedColors.text.primary,
+                      },
+                    ]}
+                    placeholder="New password"
+                    placeholderTextColor={themedColors.input.placeholder}
+                    secureTextEntry
+                    value={newPassword}
+                    onChangeText={setNewPassword}
+                  />
+
+                  <TextInput
+                    style={[
+                      styles.modalInput,
+                      {
+                        backgroundColor: themedColors.input.background,
+                        borderColor: themedColors.input.border,
+                        color: themedColors.text.primary,
+                      },
+                    ]}
+                    placeholder="Confirm password"
+                    placeholderTextColor={themedColors.input.placeholder}
+                    secureTextEntry
+                    value={confirmPassword}
+                    onChangeText={setConfirmPassword}
+                  />
+
+                  <View style={styles.modalButtons}>
+                    <View style={styles.modalButton}>
+                      <PremiumButton
+                        onPress={() => {
+                          setShowPasswordModal(false);
+                          setNewPassword('');
+                          setConfirmPassword('');
+                        }}
+                        variant="secondary"
+                        fullWidth
+                      >
+                        Cancel
+                      </PremiumButton>
+                    </View>
+                    <View style={styles.modalButton}>
+                      <PremiumButton
+                        onPress={handleChangePassword}
+                        loading={accountLoading}
+                        fullWidth
+                      >
+                        Save
+                      </PremiumButton>
+                    </View>
+                  </View>
+                </View>
+              </KeyboardAvoidingView>
+            </TouchableWithoutFeedback>
+          </View>
+        </TouchableWithoutFeedback>
+      </Modal>
+
     </View>
   );
 }
@@ -743,5 +1089,90 @@ const styles = StyleSheet.create({
   },
   themeOptionActive: {
     backgroundColor: colors.primary[50],
+  },
+  timeSelector: {
+    flexDirection: 'row',
+    gap: spacing[2],
+  },
+  timeOption: {
+    paddingHorizontal: spacing[2],
+    paddingVertical: spacing[1],
+    borderRadius: borderRadius.md,
+    borderWidth: 1.5,
+    minWidth: 36,
+    alignItems: 'center',
+  },
+  timeOptionActive: {
+    backgroundColor: colors.primary[50],
+  },
+  timeOptionText: {
+    fontSize: typography.fontSize.sm,
+    fontWeight: typography.fontWeight.medium,
+  },
+  toneSection: {
+    paddingVertical: spacing[2],
+  },
+  toneLabelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: spacing[3],
+  },
+  toneOptions: {
+    flexDirection: 'row',
+    gap: spacing[2],
+    marginLeft: 52,
+  },
+  toneOption: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing[1],
+    paddingVertical: spacing[2],
+    paddingHorizontal: spacing[2],
+    borderRadius: borderRadius.lg,
+    borderWidth: 1.5,
+  },
+  toneOptionActive: {
+    borderWidth: 1.5,
+  },
+  toneOptionText: {
+    fontSize: typography.fontSize.xs,
+    fontWeight: typography.fontWeight.medium,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: spacing[5],
+  },
+  modalContent: {
+    width: '100%',
+    maxWidth: 400,
+    borderRadius: borderRadius.xl,
+    padding: spacing[5],
+  },
+  modalTitle: {
+    fontSize: typography.fontSize.lg,
+    fontWeight: typography.fontWeight.bold,
+    marginBottom: spacing[4],
+    textAlign: 'center',
+  },
+  modalInput: {
+    borderRadius: borderRadius.lg,
+    borderWidth: 1,
+    paddingHorizontal: spacing[4],
+    paddingVertical: spacing[3],
+    fontSize: typography.fontSize.base,
+    marginBottom: spacing[3],
+  },
+  modalButtons: {
+    flexDirection: 'row',
+    gap: spacing[3],
+    marginTop: spacing[2],
+  },
+  modalButton: {
+    flex: 1,
   },
 });

@@ -11,7 +11,6 @@
 import React, { useMemo } from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import AnimatedPressable from '../ui/AnimatedPressable';
@@ -51,7 +50,7 @@ export function TopBar({ themedColors, userName }: TopBarProps) {
     }
   }, []);
 
-  const handleProfilePress = () => {
+  const handleSettingsPress = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     router.push('/profile');
   };
@@ -78,19 +77,14 @@ export function TopBar({ themedColors, userName }: TopBarProps) {
         </View>
       </View>
 
-      {/* Right side - Profile icon */}
+      {/* Right side - Settings icon */}
       <AnimatedPressable
-        onPress={handleProfilePress}
-        style={styles.profileButton}
+        onPress={handleSettingsPress}
+        style={[styles.settingsButton, { backgroundColor: themedColors.surface.secondary }]}
         hapticType="light"
         scaleIntensity="subtle"
       >
-        <LinearGradient
-          colors={colors.gradients.primary as [string, string]}
-          style={styles.profileGradient}
-        >
-          <Ionicons name="person" size={18} color={colors.neutral[0]} />
-        </LinearGradient>
+        <Ionicons name="settings-outline" size={22} color={themedColors.text.primary} />
       </AnimatedPressable>
     </View>
   );
@@ -121,10 +115,7 @@ const styles = StyleSheet.create({
     fontWeight: typography.fontWeight.bold,
     marginTop: spacing[1],
   },
-  profileButton: {
-    borderRadius: 20,
-  },
-  profileGradient: {
+  settingsButton: {
     width: 40,
     height: 40,
     borderRadius: 20,

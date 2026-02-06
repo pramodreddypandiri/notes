@@ -170,6 +170,13 @@ class PatternsService {
   }
 
   /**
+   * Dismiss a suggestion (convenience method)
+   */
+  async dismissSuggestion(patternId: string): Promise<boolean> {
+    return this.recordSuggestionResponse(patternId, false);
+  }
+
+  /**
    * Analyze notes to detect patterns
    * This should run periodically (e.g., daily at 3am)
    */

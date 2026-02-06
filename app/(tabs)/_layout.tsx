@@ -86,10 +86,16 @@ export default function TabLayout() {
       <Tabs.Screen
         name="plans"
         options={{
-          title: 'Plans',
+          href: null, // Hide from tab bar
+        }}
+      />
+      <Tabs.Screen
+        name="me"
+        options={{
+          title: 'Me',
           tabBarIcon: ({ color, focused }) => (
             <TabIcon
-              name={focused ? 'calendar' : 'calendar-outline'}
+              name={focused ? 'person' : 'person-outline'}
               color={color}
               focused={focused}
             />

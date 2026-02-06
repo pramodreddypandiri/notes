@@ -1,5 +1,4 @@
 import * as AppleAuthentication from 'expo-apple-authentication';
-import * as AuthSession from 'expo-auth-session';
 import * as WebBrowser from 'expo-web-browser';
 import * as Linking from 'expo-linking';
 import * as Crypto from 'expo-crypto';
@@ -211,6 +210,149 @@ class AuthService {
       return { success: true };
     } catch (error: any) {
       return { success: false, error: error.message || 'Failed to sign out' };
+    }
+  }
+
+  /**
+   * Change user password
+   * User must be logged in
+   */
+  async changePassword(newPassword: string): Promise<{ success: boolean; error?: string }> {
+    try {
+      if (newPassword.length < 6) {
+        return { success: false, error: 'Password must be at least 6 characters' };
+      }
+
+      const { error } = await supabase.auth.updateUser({
+        password: newPassword,
+      });
+
+      if (error) {
+        console.error('Change password error:', error);
+        return { success: false, error: error.message };
+      }
+
+      return { success: true };
+    } catch (error: any) {
+      console.error('Change password error:', error);
+      return { success: false, error: error.message || 'Failed to change password' };
+    }
+  }
+
+  /**
+   * Update user email
+   * Sends confirmation email to new address
+   */
+  async updateEmail(newEmail: string): Promise<{ success: boolean; error?: string }> {
+    try {
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(newEmail)) {
+        return { success: false, error: 'Please enter a valid email address' };
+      }
+
+      const { error } = await supabase.auth.updateUser({
+        email: newEmail,
+      });
+
+      if (error) {
+        console.error('Update email error:', error);
+        return { success: false, error: error.message };
+      }
+
+      return { success: true };
+    } catch (error: any) {
+      console.error('Update email error:', error);
+      return { success: false, error: error.message || 'Failed to update email' };
+    }
+  }
+
+  /**
+   * Update user display name
+   */
+  async updateDisplayName(displayName: string): Promise<{ success: boolean; error?: string }> {
+    try {
+      if (!displayName.trim()) {
+        return { success: false, error: 'Display name cannot be empty' };
+      }
+
+      const { error } = await supabase.auth.updateUser({
+        data: { full_name: displayName.trim() },
+      });
+
+      if (error) {
+        console.error('Update display name error:', error);
+        return { success: false, error: error.message };
+      }
+
+      return { success: true };
+    } catch (error: any) {
+      console.error('Update display name error:', error);
+      return { success: false, error: error.message || 'Failed to update display name' };
+    }
+  }
+
+  /**
+   * Delete user account and all associated data
+   * This is irreversible!
+   */
+  async deleteAccount(): Promise<{ success: boolean; error?: string }> {
+    try {
+      const user = await this.getUser();
+      if (!user) {
+        return { success: false, error: 'No user logged in' };
+      }
+
+      // Delete user data from all tables (RLS will ensure only user's data is deleted)
+      const tables = [
+        'notes',
+        'user_preferences',
+        'user_profiles',
+        'plan_patterns',
+        'onboarding_responses',
+        'saved_locations',
+        'patterns',
+        'productivity_metrics',
+      ];
+
+      for (const table of tables) {
+        const { error } = await supabase
+          .from(table)
+          .delete()
+          .eq('user_id', user.id);
+
+        if (error) {
+          console.warn(`Failed to delete from ${table}:`, error.message);
+          // Continue with other tables
+        }
+      }
+
+      // Sign out the user (Supabase doesn't allow self-deletion of auth user)
+      // The auth user record will remain but with no associated data
+      await this.signOut();
+
+      return { success: true };
+    } catch (error: any) {
+      console.error('Delete account error:', error);
+      return { success: false, error: error.message || 'Failed to delete account' };
+    }
+  }
+
+  /**
+   * Send password reset email
+   */
+  async sendPasswordResetEmail(email: string): Promise<{ success: boolean; error?: string }> {
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(email);
+
+      if (error) {
+        console.error('Password reset error:', error);
+        return { success: false, error: error.message };
+      }
+
+      return { success: true };
+    } catch (error: any) {
+      console.error('Password reset error:', error);
+      return { success: false, error: error.message || 'Failed to send reset email' };
     }
   }
 }

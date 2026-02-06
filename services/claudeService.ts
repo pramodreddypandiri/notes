@@ -138,6 +138,24 @@ const detectLocationCategoryLocally = (transcript: string): { category: NoteLoca
   return { category: null, items: [] };
 };
 
+// Helper to calculate future time from relative expression
+const calculateRelativeTime = (amount: number, unit: 'minutes' | 'hours' | 'days'): { date: string; time: string } => {
+  const now = new Date();
+
+  if (unit === 'minutes') {
+    now.setMinutes(now.getMinutes() + amount);
+  } else if (unit === 'hours') {
+    now.setHours(now.getHours() + amount);
+  } else if (unit === 'days') {
+    now.setDate(now.getDate() + amount);
+  }
+
+  const date = now.toISOString().split('T')[0]; // YYYY-MM-DD
+  const time = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
+
+  return { date, time };
+};
+
 // Local detection of reminder patterns
 const detectReminderLocally = (transcript: string): ParsedReminder | null => {
   const lower = transcript.toLowerCase();
@@ -259,6 +277,41 @@ const detectReminderLocally = (transcript: string): ParsedReminder | null => {
   // If not recurring but has "days before", it's a one-time event
   if (!reminder.reminderType && reminder.reminderDaysBefore) {
     reminder.reminderType = 'one-time';
+  }
+
+  // Check for relative time expressions: "in X mins", "after X minutes", "in X hours"
+  // These patterns handle voice notes like "remind in 45 mins" or "remind me after 2 hours"
+  const relativeTimePatterns = [
+    // "in X minutes/mins/min"
+    { pattern: /\b(?:in|after)\s+(\d+)\s*(?:minutes?|mins?)\b/i, unit: 'minutes' as const },
+    // "in X hours/hour/hrs/hr"
+    { pattern: /\b(?:in|after)\s+(\d+)\s*(?:hours?|hrs?)\b/i, unit: 'hours' as const },
+    // "in X days" (relative, not "X days before")
+    { pattern: /\b(?:in|after)\s+(\d+)\s*days?\b/i, unit: 'days' as const },
+    // Word numbers: "in thirty minutes", "in an hour"
+    { pattern: /\b(?:in|after)\s+(?:a|an|one)\s*(?:hour|hr)\b/i, unit: 'hours' as const, amount: 1 },
+    { pattern: /\b(?:in|after)\s+(?:half\s+(?:an?\s+)?hour|30\s*mins?)\b/i, unit: 'minutes' as const, amount: 30 },
+    // Common word numbers
+    { pattern: /\b(?:in|after)\s+(fifteen|fifteen)\s*(?:minutes?|mins?)\b/i, unit: 'minutes' as const, amount: 15 },
+    { pattern: /\b(?:in|after)\s+(thirty)\s*(?:minutes?|mins?)\b/i, unit: 'minutes' as const, amount: 30 },
+    { pattern: /\b(?:in|after)\s+(forty-?five|45)\s*(?:minutes?|mins?)\b/i, unit: 'minutes' as const, amount: 45 },
+    { pattern: /\b(?:in|after)\s+(two)\s*(?:hours?|hrs?)\b/i, unit: 'hours' as const, amount: 2 },
+    { pattern: /\b(?:in|after)\s+(three)\s*(?:hours?|hrs?)\b/i, unit: 'hours' as const, amount: 3 },
+  ];
+
+  for (const { pattern, unit, amount: fixedAmount } of relativeTimePatterns) {
+    const match = lower.match(pattern);
+    if (match) {
+      const amount = fixedAmount !== undefined ? fixedAmount : parseInt(match[1]);
+      if (!isNaN(amount) && amount > 0) {
+        const { date, time } = calculateRelativeTime(amount, unit);
+        reminder.reminderType = 'one-time';
+        reminder.eventDate = date;
+        reminder.recurrenceTime = time;
+        console.log(`[detectReminderLocally] Detected relative time: ${amount} ${unit} -> ${date} ${time}`);
+        break; // Use first match
+      }
+    }
   }
 
   // Default to one-time if no type detected
@@ -408,6 +461,7 @@ Reminder Detection Guidelines:
 - Only use vague defaults when no specific time is given: "morning" = "09:00", "afternoon" = "14:00", "evening" = "18:00"
 - If multiple times are mentioned (e.g. "at 11 a.m. and 2 p.m."), use the FIRST time for recurrenceTime and put ALL times in additionalTimes array
 - Parse dates relative to today's date
+- RELATIVE TIME: "in X minutes/mins", "after X hours", "in 45 mins" = calculate eventDate and recurrenceTime from current time + offset. Current time: ${new Date().toISOString()}
 
 Location Category Guidelines:
 - "grocery": food items, household supplies
@@ -422,6 +476,8 @@ Examples:
 "Remind me every Monday morning to post on LinkedIn" -> {"type": "reminder", "summary": "Post on LinkedIn", "reminder": {"isReminder": true, "reminderType": "recurring", "recurrencePattern": "weekly", "recurrenceDay": 1, "recurrenceTime": "09:00", "reminderSummary": "Post on LinkedIn"}}
 "Do laundry tomorrow at 11 a.m. and 2 p.m." -> {"type": "reminder", "summary": "Do laundry", "reminder": {"isReminder": true, "reminderType": "one-time", "eventDate": "TOMORROW_DATE", "recurrenceTime": "11:00", "additionalTimes": ["11:00", "14:00"], "reminderSummary": "Do laundry"}}
 "I have an event on Feb 18th, remind me 2 days before" -> {"type": "reminder", "summary": "Event on Feb 18th", "reminder": {"isReminder": true, "reminderType": "one-time", "eventDate": "2025-02-18", "reminderDaysBefore": 2, "reminderSummary": "Event on Feb 18th"}}
+"Remind me in 45 minutes to take medicine" -> {"type": "reminder", "summary": "Take medicine", "reminder": {"isReminder": true, "reminderType": "one-time", "eventDate": "TODAY_DATE", "recurrenceTime": "CURRENT_TIME_PLUS_45_MINS", "reminderSummary": "Take medicine"}}
+"Remind me after 2 hours to call mom" -> {"type": "reminder", "summary": "Call mom", "reminder": {"isReminder": true, "reminderType": "one-time", "eventDate": "TODAY_OR_TOMORROW_DATE", "recurrenceTime": "CURRENT_TIME_PLUS_2_HOURS", "reminderSummary": "Call mom"}}
 "I'm out of milk" -> {"type": "task", "summary": "Buy: milk", "locationCategory": "grocery", "shoppingItems": ["milk"]}
 "I want to go to a salon" -> {"type": "intent", "summary": "Visit a salon", "placeIntent": {"detected": true, "searchQuery": "salon", "placeType": "salon"}}
 "Need to find a good dentist" -> {"type": "intent", "summary": "Find a dentist", "placeIntent": {"detected": true, "searchQuery": "good dentist", "placeType": "dentist"}}`,
