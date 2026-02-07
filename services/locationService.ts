@@ -46,11 +46,13 @@ export type NoteCategory =
   | 'errand'
   | 'work'
   | 'fitness'
+  | 'leaving_home'
+  | 'arriving_home'
   | 'general';
 
 // Mapping of user's personal location types to relevant note categories
 const LOCATION_TO_CATEGORIES: Record<LocationType, NoteCategory[]> = {
-  home: [], // Home triggers "leaving" reminders, not category-based
+  home: ['arriving_home'], // Home entry triggers arriving_home notes; exit handled separately
   work: ['work'],
   gym: ['fitness'],
 };
@@ -73,8 +75,10 @@ export const STORE_CHAINS: Record<NoteCategory, string[]> = {
   ],
   health: ['hospital', 'clinic', 'doctor', 'medical center', 'urgent care'],
   fitness: ['gym', 'fitness', 'ymca', 'planet fitness', '24 hour fitness', 'la fitness'],
-  work: ['office', 'workplace'],
+  work: ['office', 'workplace', 'work', 'at work', 'to work', 'the office'],
   errand: ['post office', 'bank', 'dry cleaner', 'auto shop'],
+  leaving_home: [], // Not used for store detection, only for home exit reminders
+  arriving_home: [], // Not used for store detection, only for home entry reminders
   general: [],
 };
 
@@ -384,31 +388,28 @@ class LocationService {
   }
 
   /**
-   * Handle leaving home - show "Don't forget!" notification with pending items
+   * Handle leaving home - show notification only for notes specifically tagged as 'leaving_home'
+   * (notes that mention "leaving home", "going out", "before I leave", etc.)
    */
   private async handleLeavingHome(settings: LocationSettings): Promise<void> {
     if (!settings.leaveHomeReminder) return;
 
-    // Get pending location-based notes
-    const pendingNotes = await this.getPendingLocationNotes();
+    // Get only notes specifically marked as 'leaving_home' category
+    const leavingHomeNotes = await this.getNotesForCategories(['leaving_home']);
 
-    if (pendingNotes.length === 0 && settings.smartFilteringEnabled) {
-      // No pending items, don't notify
-      console.log('[Geofence] No pending items, skipping leave-home notification');
+    if (leavingHomeNotes.length === 0) {
+      // No leaving-home specific notes, don't notify
+      console.log('[Geofence] No leaving-home notes, skipping notification');
       return;
     }
 
-    let notificationBody = "Hope you got everything!";
+    const itemCount = leavingHomeNotes.length;
+    const previewItems = leavingHomeNotes
+      .slice(0, 3)
+      .map(n => n.parsed_data?.summary || n.transcript.substring(0, 30))
+      .join(', ');
 
-    if (pendingNotes.length > 0) {
-      const itemCount = pendingNotes.length;
-      const previewItems = pendingNotes
-        .slice(0, 3)
-        .map(n => n.parsed_data?.summary || n.transcript.substring(0, 30))
-        .join(', ');
-
-      notificationBody = `You have ${itemCount} item${itemCount > 1 ? 's' : ''}: ${previewItems}${itemCount > 3 ? '...' : ''}`;
-    }
+    const notificationBody = `${itemCount} reminder${itemCount > 1 ? 's' : ''}: ${previewItems}${itemCount > 3 ? '...' : ''}`;
 
     await notificationService.scheduleNotification(
       '🏠 Leaving Home',
@@ -451,32 +452,6 @@ class LocationService {
         `${itemCount} item${itemCount > 1 ? 's' : ''}: ${previewItems}${itemCount > 3 ? '...' : ''}`,
         new Date(Date.now() + 1000)
       );
-    }
-  }
-
-  /**
-   * Get all pending notes that have location triggers
-   * Only returns notes with a location_category (not time-based reminders)
-   */
-  private async getPendingLocationNotes(): Promise<any[]> {
-    try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return [];
-
-      const { data, error } = await supabase
-        .from('notes')
-        .select('*')
-        .eq('user_id', user.id)
-        .not('location_category', 'is', null)
-        .eq('location_completed', false)
-        .or('is_reminder.is.null,is_reminder.eq.false') // Exclude time-based reminders
-        .order('created_at', { ascending: false });
-
-      if (error) throw error;
-      return data || [];
-    } catch (error) {
-      console.error('[LocationService] Get pending notes error:', error);
-      return [];
     }
   }
 
@@ -749,6 +724,8 @@ class LocationService {
       fitness: '💪',
       work: '💼',
       errand: '📬',
+      leaving_home: '🏠',
+      arriving_home: '🏡',
       general: '📍',
     };
     return emojis[category] || '📍';

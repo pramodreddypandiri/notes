@@ -23,6 +23,6 @@ ON notes(user_id, location_completed)
 WHERE location_category IS NOT NULL AND location_completed = FALSE;
 
 -- Comment explaining the location_category values
-COMMENT ON COLUMN notes.location_category IS 'Location trigger category: shopping, grocery, pharmacy, health, errand, work, fitness, or null for no location trigger';
+COMMENT ON COLUMN notes.location_category IS 'Location trigger category: shopping, grocery, pharmacy, health, errand, work, fitness, leaving_home, arriving_home, or null for no location trigger';
 COMMENT ON COLUMN notes.shopping_items IS 'Array of items to buy (for grocery/shopping notes)';
 COMMENT ON COLUMN notes.location_completed IS 'Whether this location-based task has been completed';

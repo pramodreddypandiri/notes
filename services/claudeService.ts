@@ -1,5 +1,6 @@
 import { buildAIProfileContext } from './profileService';
 import { ENV } from '../config/env';
+import { STORE_CHAINS } from './locationService';
 
 const CLAUDE_API_URL = 'https://api.anthropic.com/v1/messages';
 
@@ -12,6 +13,8 @@ export type NoteLocationCategory =
   | 'errand'
   | 'work'
   | 'fitness'
+  | 'leaving_home'
+  | 'arriving_home'
   | null;
 
 // Reminder types
@@ -112,7 +115,50 @@ const detectLocationCategoryLocally = (transcript: string): { category: NoteLoca
     return [...new Set(items)]; // Remove duplicates
   };
 
+  // Leaving home patterns - check first for explicit "leaving home" notes
+  const leavingHomePatterns = [
+    /\b(leaving|leave)\s+(home|house|the house)\b/i,
+    /\b(before|when)\s+i\s+(leave|go out|head out|step out)\b/i,
+    /\b(going|heading|stepping)\s+out\b/i,
+    /\b(on my way|on the way)\s+out\b/i,
+    /\b(before|when)\s+(going|heading)\s+out\b/i,
+    /\b(don'?t forget|remember)\s+(when|before)\s+(leaving|going out)\b/i,
+    /\b(as i|when i|before i)\s+(walk out|go outside|exit)\b/i,
+  ];
+
+  // Arriving home patterns - for notes triggered when getting back home
+  const arrivingHomePatterns = [
+    /\b(when|once|after)\s+i\s+(get|arrive|reach|come|am)\s+(home|back home|back to the house)\b/i,
+    /\b(arriving|arrive|get|reach|come)\s+(home|back home)\b/i,
+    /\b(when|once)\s+(i'm|i am|im)\s+(home|back home|back)\b/i,
+    /\b(getting|reaching|coming)\s+(home|back home|back to the house)\b/i,
+    /\b(at home|back at home)\s*(remind|remember|don'?t forget)?\b/i,
+    /\b(remind|remember).*(when|once|after).*(home|get back|arrive)\b/i,
+    /\b(as soon as|right when)\s+i\s+(get|arrive|reach)\s+(home|back)\b/i,
+  ];
+
   // Check patterns in order of specificity
+  // Check leaving home first - these are specifically for "leave home" reminders
+  if (leavingHomePatterns.some(p => p.test(lower))) {
+    return { category: 'leaving_home', items: [] };
+  }
+
+  // Check arriving home - for reminders when getting back home
+  if (arrivingHomePatterns.some(p => p.test(lower))) {
+    return { category: 'arriving_home', items: [] };
+  }
+
+  // Check for store names mentioned in the transcript
+  // This handles cases like "when I'm at Kroger", "at Walmart remind me", "near CVS", "at work"
+  const storeCategories = ['grocery', 'pharmacy', 'shopping', 'health', 'fitness', 'errand', 'work'] as const;
+  for (const category of storeCategories) {
+    const stores = STORE_CHAINS[category];
+    if (stores && stores.some((store: string) => lower.includes(store))) {
+      const items = category === 'grocery' ? extractShoppingItems(lower) : [];
+      return { category, items };
+    }
+  }
+
   if (pharmacyPatterns.some(p => p.test(lower))) {
     return { category: 'pharmacy', items: [] };
   }
@@ -430,7 +476,7 @@ Return format:
   "food": string (if mentioned),
   "time": string (if mentioned),
   "summary": string (clean one-line version - never start with "Reminder:" or "Remind me" prefix),
-  "locationCategory": "shopping" | "grocery" | "pharmacy" | "health" | "errand" | "work" | "fitness" | null,
+  "locationCategory": "shopping" | "grocery" | "pharmacy" | "health" | "errand" | "work" | "fitness" | "leaving_home" | "arriving_home" | null,
   "shoppingItems": string[] (list of items to buy, if applicable),
   "reminder": {
     "isReminder": boolean,
@@ -471,6 +517,8 @@ Location Category Guidelines:
 - "errand": post office, bank, dry cleaning
 - "work": work-related tasks
 - "fitness": gym, workout, exercise
+- "leaving_home": things to remember when leaving home/house, going out, before I leave
+- "arriving_home": things to do when getting home, arriving back, once I'm home
 
 Examples:
 "Remind me every Monday morning to post on LinkedIn" -> {"type": "reminder", "summary": "Post on LinkedIn", "reminder": {"isReminder": true, "reminderType": "recurring", "recurrencePattern": "weekly", "recurrenceDay": 1, "recurrenceTime": "09:00", "reminderSummary": "Post on LinkedIn"}}

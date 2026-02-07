@@ -10,7 +10,7 @@
  * - Sign out
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View,
   Text,
@@ -24,7 +24,9 @@ import {
   TouchableWithoutFeedback,
   KeyboardAvoidingView,
   Platform,
+  ActivityIndicator,
 } from 'react-native';
+import * as Location from 'expo-location';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -38,6 +40,7 @@ import { colors, typography, spacing, borderRadius, shadows, getThemedColors } f
 // Components
 import AnimatedPressable from '../components/ui/AnimatedPressable';
 import PremiumButton from '../components/ui/PremiumButton';
+import WheelTimePicker from '../components/ui/WheelTimePicker';
 
 // Services
 import { supabase } from '../config/supabase';
@@ -45,6 +48,7 @@ import soundService from '../services/soundService';
 import { getUserProfile, UserProfile } from '../services/profileService';
 import authService from '../services/authService';
 import preferencesService, { UserPreferences, NotificationTone } from '../services/preferencesService';
+import { autocompleteAddress, getPlaceDetailsById, AddressSuggestion } from '../services/googlePlacesService';
 
 // Context
 import { useTheme } from '../context/ThemeContext';
@@ -56,6 +60,7 @@ export default function ProfileScreen() {
   const [user, setUser] = useState<any>(null);
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [profileLoading, setProfileLoading] = useState(true);
   const [preferences, setPreferences] = useState<UserPreferences | null>(null);
 
   // Account management state
@@ -63,6 +68,14 @@ export default function ProfileScreen() {
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [accountLoading, setAccountLoading] = useState(false);
+
+  // Location modal state
+  const [showLocationModal, setShowLocationModal] = useState(false);
+  const [locationSearch, setLocationSearch] = useState('');
+  const [locationLoading, setLocationLoading] = useState(false);
+  const [suggestions, setSuggestions] = useState<AddressSuggestion[]>([]);
+  const [suggestionsLoading, setSuggestionsLoading] = useState(false);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Check if user signed in with email/password (not OAuth)
   const isEmailUser = user?.app_metadata?.provider === 'email' ||
@@ -72,6 +85,10 @@ export default function ProfileScreen() {
   const [wakeTime, setWakeTime] = useState('07:00');
   const [sleepTime, setSleepTime] = useState('22:00');
   const [notificationTone, setNotificationTone] = useState<NotificationTone>('friendly');
+
+  // Time picker modal state
+  const [timePickerVisible, setTimePickerVisible] = useState(false);
+  const [editingTimeType, setEditingTimeType] = useState<'wake' | 'sleep'>('wake');
 
   // Theme
   const { isDark, themeMode, setThemeMode } = useTheme();
@@ -90,6 +107,8 @@ export default function ProfileScreen() {
       setProfile(userProfile);
     } catch (error) {
       console.error('Failed to load profile:', error);
+    } finally {
+      setProfileLoading(false);
     }
   };
 
@@ -158,6 +177,28 @@ export default function ProfileScreen() {
     );
   };
 
+  const openTimePicker = (type: 'wake' | 'sleep') => {
+    setEditingTimeType(type);
+    setTimePickerVisible(true);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  };
+
+  const handleTimeSelected = async (time: string) => {
+    if (editingTimeType === 'wake') {
+      await handleUpdatePreference('wake_time', time);
+    } else {
+      await handleUpdatePreference('sleep_time', time);
+    }
+  };
+
+  // Format time for display (24h to 12h)
+  const formatTimeDisplay = (time: string) => {
+    const [h, m] = time.split(':').map(Number);
+    const period = h >= 12 ? 'PM' : 'AM';
+    const hour12 = h % 12 || 12;
+    return `${hour12}:${String(m).padStart(2, '0')} ${period}`;
+  };
+
   const handleUpdatePreference = async (key: string, value: any) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
@@ -200,8 +241,8 @@ export default function ProfileScreen() {
     setSoundEnabled(soundService.getEnabled());
   };
 
-  const handleSaveLocation = async () => {
-    if (!city.trim()) {
+  const handleSaveLocation = async (locationCity: string) => {
+    if (!locationCity.trim()) {
       Alert.alert('Error', 'Please enter your city');
       return;
     }
@@ -218,18 +259,23 @@ export default function ProfileScreen() {
         return;
       }
 
-      const { error } = await supabase.from('user_preferences').upsert({
-        user_id: user.id,
-        location_city: city,
-        location_lat: 0,
-        location_lng: 0,
-      });
+      const { error } = await supabase.from('user_preferences').upsert(
+        {
+          user_id: user.id,
+          location_city: locationCity,
+          location_lat: 0,
+          location_lng: 0,
+        },
+        { onConflict: 'user_id' }
+      );
 
       if (error) throw error;
 
+      setCity(locationCity);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       await soundService.playSuccess();
-      Alert.alert('Success', 'Location saved successfully');
+      setShowLocationModal(false);
+      setLocationSearch('');
     } catch (error) {
       console.error('Failed to save location:', error);
       Alert.alert('Error', 'Failed to save location');
@@ -237,6 +283,95 @@ export default function ProfileScreen() {
       setLoading(false);
     }
   };
+
+  const handleGetCurrentLocation = async () => {
+    setLocationLoading(true);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permission Denied', 'Please enable location permissions in your device settings.');
+        setLocationLoading(false);
+        return;
+      }
+
+      const location = await Location.getCurrentPositionAsync({});
+      const [address] = await Location.reverseGeocodeAsync({
+        latitude: location.coords.latitude,
+        longitude: location.coords.longitude,
+      });
+
+      if (address) {
+        const cityName = address.city || address.subregion || address.region || '';
+        const fullAddress = [cityName, address.region, address.country]
+          .filter(Boolean)
+          .join(', ');
+
+        setLocationSearch(fullAddress);
+        setSuggestions([]);
+        await handleSaveLocation(fullAddress);
+      }
+    } catch (error) {
+      console.error('Failed to get current location:', error);
+      Alert.alert('Error', 'Failed to get your current location. Please try again.');
+    } finally {
+      setLocationLoading(false);
+    }
+  };
+
+  // Debounced address search
+  const handleAddressChange = useCallback(
+    (text: string) => {
+      console.log('[Profile] handleAddressChange called with:', text);
+      setLocationSearch(text);
+
+      // Clear existing timeout
+      if (debounceRef.current) {
+        clearTimeout(debounceRef.current);
+      }
+
+      // Don't search if less than 3 characters
+      if (text.trim().length < 3) {
+        setSuggestions([]);
+        setSuggestionsLoading(false);
+        return;
+      }
+
+      setSuggestionsLoading(true);
+
+      // Debounce the search by 300ms
+      debounceRef.current = setTimeout(async () => {
+        try {
+          console.log('[Profile] Calling autocompleteAddress for:', text);
+          const results = await autocompleteAddress(text);
+          console.log('[Profile] Got suggestions:', results.length, results);
+          setSuggestions(results);
+        } catch (error) {
+          console.error('[Profile] Failed to get address suggestions:', error);
+          setSuggestions([]);
+        } finally {
+          setSuggestionsLoading(false);
+        }
+      }, 300);
+    },
+    []
+  );
+
+  // Handle suggestion selection
+  const handleSelectSuggestion = useCallback(async (suggestion: AddressSuggestion) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setLocationSearch(suggestion.fullText);
+    setSuggestions([]);
+
+    // Get full place details and save
+    const details = await getPlaceDetailsById(suggestion.placeId);
+    if (details) {
+      await handleSaveLocation(details.address || suggestion.fullText);
+    } else {
+      await handleSaveLocation(suggestion.fullText);
+    }
+  }, []);
 
   const handleToggleSound = async (value: boolean) => {
     setSoundEnabled(value);
@@ -365,7 +500,12 @@ export default function ProfileScreen() {
         >
           <Text style={[styles.sectionTitle, { color: themedColors.text.tertiary }]}>Personalization</Text>
           <View style={[styles.card, shadows.md, { backgroundColor: themedColors.surface.primary }]}>
-            {profile?.onboarding_completed ? (
+            {profileLoading ? (
+              <View style={styles.profileSummary}>
+                <View style={[styles.skeletonLine, { width: '60%', backgroundColor: themedColors.surface.secondary }]} />
+                <View style={[styles.skeletonLine, { width: '90%', marginTop: spacing[2], backgroundColor: themedColors.surface.secondary }]} />
+              </View>
+            ) : profile?.onboarding_completed ? (
               <>
                 <View style={styles.profileSummary}>
                   <View style={styles.profileSummaryRow}>
@@ -435,43 +575,27 @@ export default function ProfileScreen() {
         >
           <Text style={[styles.sectionTitle, { color: themedColors.text.tertiary }]}>Location</Text>
           <View style={[styles.card, shadows.md, { backgroundColor: themedColors.surface.primary }]}>
-            <View style={styles.inputGroup}>
-              <Text style={[styles.inputLabel, { color: themedColors.text.secondary }]}>Your City</Text>
-              <View style={[styles.inputContainer, { backgroundColor: themedColors.input.background, borderColor: themedColors.input.border }]}>
-                <Ionicons
-                  name="location-outline"
-                  size={20}
-                  color={themedColors.input.placeholder}
-                  style={styles.inputIcon}
-                />
-                <TextInput
-                  style={[styles.input, { color: themedColors.text.primary }]}
-                  value={city}
-                  onChangeText={setCity}
-                  placeholder="Enter your city (e.g., San Francisco)"
-                  placeholderTextColor={themedColors.input.placeholder}
-                />
-              </View>
-            </View>
-
-            <PremiumButton
-              onPress={handleSaveLocation}
-              loading={loading}
-              fullWidth
-              icon={
-                !loading ? (
-                  <Ionicons
-                    name="checkmark"
-                    size={18}
-                    color={colors.neutral[0]}
-                  />
-                ) : undefined
+            <SettingsRow
+              icon="location-outline"
+              title="Your Location"
+              description={city || 'Not set'}
+              themedColors={themedColors}
+              trailing={
+                <AnimatedPressable
+                  onPress={() => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    setLocationSearch(city);
+                    setShowLocationModal(true);
+                  }}
+                  style={[styles.editButton, { backgroundColor: themedColors.surface.secondary }]}
+                  hapticType="light"
+                >
+                  <Text style={[styles.editButtonText, { color: colors.primary[500] }]}>Edit</Text>
+                </AnimatedPressable>
               }
-            >
-              Save Location
-            </PremiumButton>
+            />
 
-            <Text style={[styles.hint, { color: themedColors.text.tertiary }]}>
+            <Text style={[styles.hint, { color: themedColors.text.tertiary, marginTop: spacing[3] }]}>
               We use your location to find nearby activities and places for your
               weekend plans.
             </Text>
@@ -485,71 +609,51 @@ export default function ProfileScreen() {
         >
           <Text style={[styles.sectionTitle, { color: themedColors.text.tertiary }]}>Preferences</Text>
           <View style={[styles.card, shadows.md, { backgroundColor: themedColors.surface.primary }]}>
-            <SettingsRow
-              icon="sunny-outline"
-              title="Wake Time"
-              description="When your day starts"
-              themedColors={themedColors}
-              trailing={
-                <View style={styles.timeSelector}>
-                  {['06:00', '07:00', '08:00', '09:00'].map((time) => (
-                    <AnimatedPressable
-                      key={time}
-                      onPress={() => handleUpdatePreference('wake_time', time)}
-                      style={[
-                        styles.timeOption,
-                        wakeTime === time && styles.timeOptionActive,
-                        { borderColor: wakeTime === time ? colors.primary[500] : themedColors.surface.border },
-                      ]}
-                      hapticType="light"
-                    >
-                      <Text
-                        style={[
-                          styles.timeOptionText,
-                          { color: wakeTime === time ? colors.primary[500] : themedColors.text.tertiary },
-                        ]}
-                      >
-                        {time.replace(':00', '')}
+            <AnimatedPressable
+              onPress={() => openTimePicker('wake')}
+              hapticType="light"
+            >
+              <SettingsRow
+                icon="sunny-outline"
+                title="Wake Time"
+                description="When your day starts"
+                themedColors={themedColors}
+                trailing={
+                  <View style={styles.timePickerTrailing}>
+                    <View style={[styles.timeDisplay, { backgroundColor: themedColors.surface.secondary, borderColor: themedColors.surface.border }]}>
+                      <Text style={[styles.timeDisplayText, { color: themedColors.text.primary }]}>
+                        {formatTimeDisplay(wakeTime)}
                       </Text>
-                    </AnimatedPressable>
-                  ))}
-                </View>
-              }
-            />
+                    </View>
+                    <Ionicons name="chevron-forward" size={20} color={themedColors.text.muted} />
+                  </View>
+                }
+              />
+            </AnimatedPressable>
 
             <View style={[styles.divider, { backgroundColor: themedColors.surface.border }]} />
 
-            <SettingsRow
-              icon="moon-outline"
-              title="Sleep Time"
-              description="When your day ends"
-              themedColors={themedColors}
-              trailing={
-                <View style={styles.timeSelector}>
-                  {['21:00', '22:00', '23:00', '00:00'].map((time) => (
-                    <AnimatedPressable
-                      key={time}
-                      onPress={() => handleUpdatePreference('sleep_time', time)}
-                      style={[
-                        styles.timeOption,
-                        sleepTime === time && styles.timeOptionActive,
-                        { borderColor: sleepTime === time ? colors.primary[500] : themedColors.surface.border },
-                      ]}
-                      hapticType="light"
-                    >
-                      <Text
-                        style={[
-                          styles.timeOptionText,
-                          { color: sleepTime === time ? colors.primary[500] : themedColors.text.tertiary },
-                        ]}
-                      >
-                        {time === '00:00' ? '12' : time.replace(':00', '')}
+            <AnimatedPressable
+              onPress={() => openTimePicker('sleep')}
+              hapticType="light"
+            >
+              <SettingsRow
+                icon="moon-outline"
+                title="Sleep Time"
+                description="When your day ends"
+                themedColors={themedColors}
+                trailing={
+                  <View style={styles.timePickerTrailing}>
+                    <View style={[styles.timeDisplay, { backgroundColor: themedColors.surface.secondary, borderColor: themedColors.surface.border }]}>
+                      <Text style={[styles.timeDisplayText, { color: themedColors.text.primary }]}>
+                        {formatTimeDisplay(sleepTime)}
                       </Text>
-                    </AnimatedPressable>
-                  ))}
-                </View>
-              }
-            />
+                    </View>
+                    <Ionicons name="chevron-forward" size={20} color={themedColors.text.muted} />
+                  </View>
+                }
+              />
+            </AnimatedPressable>
 
             <View style={[styles.divider, { backgroundColor: themedColors.surface.border }]} />
 
@@ -851,6 +955,121 @@ export default function ProfileScreen() {
         </TouchableWithoutFeedback>
       </Modal>
 
+      {/* Location Search Modal */}
+      <Modal
+        visible={showLocationModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          setShowLocationModal(false);
+          setSuggestions([]);
+        }}
+      >
+        <TouchableWithoutFeedback onPress={() => {
+          setShowLocationModal(false);
+          setSuggestions([]);
+        }}>
+          <View style={styles.modalOverlay}>
+            <TouchableWithoutFeedback>
+              <KeyboardAvoidingView
+                behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+                style={styles.locationModalContainer}
+              >
+                <View style={[styles.locationModalContent, { backgroundColor: themedColors.surface.primary }]}>
+                  <View style={styles.locationSearchRow}>
+                    <View style={[styles.locationSearchInputContainer, { backgroundColor: themedColors.input.background }]}>
+                      <TextInput
+                        style={[styles.locationSearchInput, { color: themedColors.text.primary }]}
+                        value={locationSearch}
+                        onChangeText={handleAddressChange}
+                        placeholder="Search for an address"
+                        placeholderTextColor={themedColors.input.placeholder}
+                        autoFocus
+                        returnKeyType="search"
+                      />
+                    </View>
+                    <AnimatedPressable
+                      onPress={handleGetCurrentLocation}
+                      style={styles.currentLocationButton}
+                      hapticType="medium"
+                      disabled={locationLoading}
+                    >
+                      {locationLoading ? (
+                        <ActivityIndicator size="small" color={colors.neutral[0]} />
+                      ) : (
+                        <Ionicons name="locate" size={24} color={colors.neutral[0]} />
+                      )}
+                    </AnimatedPressable>
+                  </View>
+
+                  <Text style={[styles.locationHintText, { color: themedColors.text.tertiary }]}>
+                    Type to search or tap the location button for current location
+                  </Text>
+
+                  {/* Suggestions List */}
+                  {(suggestions.length > 0 || suggestionsLoading) && (
+                    <View style={[styles.suggestionsContainer, { backgroundColor: themedColors.surface.secondary }]}>
+                      {suggestionsLoading ? (
+                        <View style={styles.suggestionsLoading}>
+                          <ActivityIndicator size="small" color={colors.primary[500]} />
+                        </View>
+                      ) : (
+                        suggestions.map((suggestion) => (
+                          <AnimatedPressable
+                            key={suggestion.placeId}
+                            onPress={() => handleSelectSuggestion(suggestion)}
+                            style={styles.suggestionItem}
+                            hapticType="light"
+                          >
+                            <Ionicons
+                              name="location-outline"
+                              size={20}
+                              color={themedColors.text.tertiary}
+                              style={styles.suggestionIcon}
+                            />
+                            <View style={styles.suggestionTextContainer}>
+                              <Text style={[styles.suggestionMainText, { color: themedColors.text.primary }]}>
+                                {suggestion.mainText}
+                              </Text>
+                              <Text style={[styles.suggestionSecondaryText, { color: themedColors.text.tertiary }]}>
+                                {suggestion.secondaryText}
+                              </Text>
+                            </View>
+                          </AnimatedPressable>
+                        ))
+                      )}
+                    </View>
+                  )}
+
+                  {/* Cancel button */}
+                  <View style={styles.locationModalButtons}>
+                    <PremiumButton
+                      onPress={() => {
+                        setShowLocationModal(false);
+                        setLocationSearch('');
+                        setSuggestions([]);
+                      }}
+                      variant="secondary"
+                      fullWidth
+                    >
+                      Cancel
+                    </PremiumButton>
+                  </View>
+                </View>
+              </KeyboardAvoidingView>
+            </TouchableWithoutFeedback>
+          </View>
+        </TouchableWithoutFeedback>
+      </Modal>
+
+      {/* Time Picker Modal */}
+      <WheelTimePicker
+        visible={timePickerVisible}
+        onClose={() => setTimePickerVisible(false)}
+        onConfirm={handleTimeSelected}
+        initialTime={editingTimeType === 'wake' ? wakeTime : sleepTime}
+        title={editingTimeType === 'wake' ? 'Wake Time' : 'Sleep Time'}
+      />
     </View>
   );
 }
@@ -1074,6 +1293,10 @@ const styles = StyleSheet.create({
     fontSize: typography.fontSize.sm,
     lineHeight: typography.fontSize.sm * typography.lineHeight.relaxed,
   },
+  skeletonLine: {
+    height: 16,
+    borderRadius: borderRadius.sm,
+  },
   themeSwitcher: {
     flexDirection: 'row',
     gap: spacing[2],
@@ -1090,24 +1313,22 @@ const styles = StyleSheet.create({
   themeOptionActive: {
     backgroundColor: colors.primary[50],
   },
-  timeSelector: {
+  timePickerTrailing: {
     flexDirection: 'row',
+    alignItems: 'center',
     gap: spacing[2],
   },
-  timeOption: {
-    paddingHorizontal: spacing[2],
-    paddingVertical: spacing[1],
+  timeDisplay: {
+    paddingHorizontal: spacing[3],
+    paddingVertical: spacing[2],
     borderRadius: borderRadius.md,
-    borderWidth: 1.5,
-    minWidth: 36,
+    borderWidth: 1,
+    minWidth: 90,
     alignItems: 'center',
   },
-  timeOptionActive: {
-    backgroundColor: colors.primary[50],
-  },
-  timeOptionText: {
-    fontSize: typography.fontSize.sm,
-    fontWeight: typography.fontWeight.medium,
+  timeDisplayText: {
+    fontSize: typography.fontSize.base,
+    fontWeight: typography.fontWeight.semibold,
   },
   toneSection: {
     paddingVertical: spacing[2],
@@ -1174,5 +1395,85 @@ const styles = StyleSheet.create({
   },
   modalButton: {
     flex: 1,
+  },
+  editButton: {
+    paddingHorizontal: spacing[3],
+    paddingVertical: spacing[2],
+    borderRadius: borderRadius.md,
+  },
+  editButtonText: {
+    fontSize: typography.fontSize.sm,
+    fontWeight: typography.fontWeight.semibold,
+  },
+  locationModalContainer: {
+    width: '100%',
+    paddingHorizontal: spacing[5],
+  },
+  locationModalContent: {
+    width: '100%',
+    borderRadius: borderRadius.xl,
+    padding: spacing[5],
+  },
+  locationSearchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing[3],
+  },
+  locationSearchInputContainer: {
+    flex: 1,
+    borderRadius: borderRadius.xl,
+    paddingHorizontal: spacing[4],
+    paddingVertical: spacing[4],
+  },
+  locationSearchInput: {
+    fontSize: typography.fontSize.lg,
+  },
+  currentLocationButton: {
+    width: 56,
+    height: 56,
+    borderRadius: borderRadius.lg,
+    backgroundColor: colors.primary[500],
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  locationHintText: {
+    fontSize: typography.fontSize.sm,
+    marginTop: spacing[3],
+    marginBottom: spacing[4],
+  },
+  locationModalButtons: {
+    flexDirection: 'row',
+    gap: spacing[3],
+  },
+  suggestionsContainer: {
+    borderRadius: borderRadius.lg,
+    marginBottom: spacing[4],
+    overflow: 'hidden',
+  },
+  suggestionsLoading: {
+    padding: spacing[4],
+    alignItems: 'center',
+  },
+  suggestionItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: spacing[3],
+    paddingHorizontal: spacing[4],
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255, 255, 255, 0.1)',
+  },
+  suggestionIcon: {
+    marginRight: spacing[3],
+  },
+  suggestionTextContainer: {
+    flex: 1,
+  },
+  suggestionMainText: {
+    fontSize: typography.fontSize.base,
+    fontWeight: typography.fontWeight.medium,
+    marginBottom: spacing[1],
+  },
+  suggestionSecondaryText: {
+    fontSize: typography.fontSize.sm,
   },
 });

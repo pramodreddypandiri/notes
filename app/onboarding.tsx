@@ -1,8 +1,8 @@
 /**
- * Premium Onboarding Flow
+ * Onboarding Flow
  *
- * Multi-step onboarding to collect user personality traits and preferences
- * for AI-powered plan personalization.
+ * Multi-step onboarding to collect user preferences for AI personalization.
+ * Questions: Age, Gender, Wake/Bed times, Hobbies, Tone, Self-description
  */
 
 import React, { useState, useCallback } from 'react';
@@ -11,18 +11,17 @@ import {
   View,
   Text,
   Dimensions,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
 } from 'react-native';
 import Animated, {
   FadeIn,
-  FadeOut,
-  SlideInRight,
-  SlideOutLeft,
   useAnimatedStyle,
   useSharedValue,
   withSpring,
   withSequence,
   withDelay,
-  runOnJS,
 } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
@@ -31,236 +30,105 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 
 import {
-  OnboardingSlider,
   OnboardingOption,
   OnboardingProgress,
   OnboardingScreen,
+  OnboardingTimePicker,
+  OnboardingTextInput,
 } from '../components/onboarding';
 import { PremiumButton } from '../components/ui/PremiumButton';
 import { AnimatedPressable } from '../components/ui/AnimatedPressable';
 import {
   updateUserProfile,
-  saveOnboardingResponse,
   completeOnboarding,
 } from '../services/profileService';
 import { colors, typography, spacing, borderRadius, animation, textPresets } from '../theme';
 
-const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
-// Onboarding question data
-const PERSONALITY_QUESTIONS = [
-  {
-    id: 'introvert_extrovert',
-    title: 'Social Energy',
-    subtitle: 'How do you prefer to spend your free time?',
-    leftLabel: 'Introvert',
-    rightLabel: 'Extrovert',
-    leftEmoji: '🏠',
-    rightEmoji: '🎉',
-    leftDesc: 'Prefer quiet, intimate settings',
-    rightDesc: 'Love buzzing, social atmospheres',
-  },
-  {
-    id: 'spontaneous_planner',
-    title: 'Planning Style',
-    subtitle: 'When it comes to making plans...',
-    leftLabel: 'Planner',
-    rightLabel: 'Spontaneous',
-    leftEmoji: '📅',
-    rightEmoji: '✨',
-    leftDesc: 'I like to plan ahead in detail',
-    rightDesc: 'I prefer going with the flow',
-  },
-  {
-    id: 'adventurous_comfort',
-    title: 'Adventure Level',
-    subtitle: 'When trying new things...',
-    leftLabel: 'Comfort',
-    rightLabel: 'Adventure',
-    leftEmoji: '🛋️',
-    rightEmoji: '🎢',
-    leftDesc: 'I stick to what I know and love',
-    rightDesc: 'I\'m always ready to try something new',
-  },
-  {
-    id: 'energy_level',
-    title: 'Activity Preference',
-    subtitle: 'What kind of activities do you enjoy?',
-    leftLabel: 'Relaxed',
-    rightLabel: 'Active',
-    leftEmoji: '🧘',
-    rightEmoji: '⚡',
-    leftDesc: 'Chill vibes and laid-back activities',
-    rightDesc: 'High-energy and physically active',
-  },
+// Onboarding question options
+const AGE_OPTIONS = [
+  { value: '18-24', label: '18-24', emoji: '🌱', description: 'Just getting started' },
+  { value: '25-34', label: '25-34', emoji: '🚀', description: 'Building momentum' },
+  { value: '35-44', label: '35-44', emoji: '⭐', description: 'In your prime' },
+  { value: '45-54', label: '45-54', emoji: '🎯', description: 'Experienced & focused' },
+  { value: '55-64', label: '55-64', emoji: '🏆', description: 'Seasoned achiever' },
+  { value: '65+', label: '65+', emoji: '👑', description: 'Wisdom & experience' },
 ];
 
-const SOCIAL_OPTIONS = {
-  group_size: {
-    title: 'Who do you usually go out with?',
-    subtitle: 'Select all that apply',
-    multiSelect: true,
-    options: [
-      { value: 'solo', label: 'Just Me', emoji: '🙋', description: 'Solo adventures' },
-      { value: 'couple', label: 'With Partner', emoji: '💑', description: 'Date nights' },
-      { value: 'small_group', label: 'Small Group', emoji: '👯', description: '2-4 friends' },
-      { value: 'large_group', label: 'Large Group', emoji: '🎊', description: '5+ people' },
-    ],
-  },
-  social_context: {
-    title: 'What\'s your typical outing vibe?',
-    subtitle: 'Select all that apply',
-    multiSelect: true,
-    options: [
-      { value: 'date_night', label: 'Date Night', emoji: '🌹', description: 'Romantic evenings out' },
-      { value: 'friends', label: 'Friend Hangouts', emoji: '🍻', description: 'Casual time with friends' },
-      { value: 'family', label: 'Family Time', emoji: '👨‍👩‍👧', description: 'Family-friendly activities' },
-      { value: 'solo', label: 'Me Time', emoji: '🎧', description: 'Self-care and solo fun' },
-    ],
-  },
-};
+const GENDER_OPTIONS = [
+  { value: 'male', label: 'Male', emoji: '👨', description: '' },
+  { value: 'female', label: 'Female', emoji: '👩', description: '' },
+  { value: 'non_binary', label: 'Non-binary', emoji: '🧑', description: '' },
+  { value: 'prefer_not_to_say', label: 'Prefer not to say', emoji: '🤐', description: '' },
+];
 
-const PRACTICAL_OPTIONS = {
-  budget: {
-    title: 'What\'s your spending style?',
-    subtitle: 'No judgment—we\'ll find great options for any budget',
-    options: [
-      { value: 'budget', label: 'Budget-Friendly', emoji: '💰', description: 'Keep it affordable' },
-      { value: 'moderate', label: 'Moderate', emoji: '💳', description: 'Balance quality and cost' },
-      { value: 'splurge', label: 'Treat Yourself', emoji: '💎', description: 'Worth the splurge' },
-      { value: 'flexible', label: 'Depends', emoji: '🤷', description: 'Varies by occasion' },
-    ],
-  },
-  time: {
-    title: 'When do you like to go out?',
-    subtitle: 'We\'ll find places that are perfect for your schedule',
-    options: [
-      { value: 'morning', label: 'Morning Person', emoji: '🌅', description: 'Brunch and early activities' },
-      { value: 'afternoon', label: 'Afternoon', emoji: '☀️', description: 'Daytime adventures' },
-      { value: 'evening', label: 'Evening', emoji: '🌆', description: 'Dinner and sunset vibes' },
-      { value: 'night', label: 'Night Owl', emoji: '🌙', description: 'Late night fun' },
-      { value: 'flexible', label: 'Anytime', emoji: '🕐', description: 'Flexible with timing' },
-    ],
-  },
-  pace: {
-    title: 'How packed should your plans be?',
-    subtitle: 'We\'ll create the perfect itinerary density',
-    options: [
-      { value: 'relaxed', label: 'Relaxed', emoji: '🐢', description: 'One or two things, plenty of downtime' },
-      { value: 'balanced', label: 'Balanced', emoji: '⚖️', description: 'A good mix of activity and rest' },
-      { value: 'packed', label: 'Packed', emoji: '🚀', description: 'Maximize the day!' },
-    ],
-  },
-};
+const TONE_OPTIONS = [
+  { value: 'professional', label: 'Professional', emoji: '💼', description: 'Formal and business-like' },
+  { value: 'friendly', label: 'Friendly', emoji: '😊', description: 'Warm and approachable' },
+  { value: 'casual', label: 'Casual', emoji: '✌️', description: 'Relaxed and informal' },
+  { value: 'motivational', label: 'Motivational', emoji: '🔥', description: 'Energetic and inspiring' },
+];
 
-const TOTAL_STEPS = 6;
+const TOTAL_STEPS = 9; // welcome + 7 questions + complete
 
-type Step = 'welcome' | 'personality' | 'social' | 'context' | 'practical' | 'complete';
+type Step = 'welcome' | 'age' | 'gender' | 'wake_time' | 'bed_time' | 'hobbies' | 'tone' | 'self_description' | 'complete';
+
+const STEP_ORDER: Step[] = ['welcome', 'age', 'gender', 'wake_time', 'bed_time', 'hobbies', 'tone', 'self_description', 'complete'];
 
 export default function OnboardingFlow() {
   const [step, setStep] = useState<Step>('welcome');
-  const [currentPersonalityIndex, setCurrentPersonalityIndex] = useState(0);
 
   // Profile data
-  const [personality, setPersonality] = useState({
-    introvert_extrovert: 5,
-    spontaneous_planner: 5,
-    adventurous_comfort: 5,
-    energy_level: 5,
-  });
-  const [social, setSocial] = useState({
-    preferred_group_size: [] as string[],
-    social_context: [] as string[],
-  });
-  const [practical, setPractical] = useState({
-    budget_sensitivity: 'moderate' as string,
-    time_preference: 'flexible' as string,
-    pace_preference: 'balanced' as string,
+  const [profileData, setProfileData] = useState({
+    age_range: null as string | null,
+    gender: null as string | null,
+    wake_up_time: null as string | null,
+    bed_time: null as string | null,
+    hobbies: '',
+    tone: null as string | null,
+    self_description: '',
   });
 
   const [isLoading, setIsLoading] = useState(false);
 
   const getCurrentStepNumber = (): number => {
-    switch (step) {
-      case 'welcome': return 1;
-      case 'personality': return 2;
-      case 'social': return 3;
-      case 'context': return 4;
-      case 'practical': return 5;
-      case 'complete': return 6;
-      default: return 1;
-    }
+    return STEP_ORDER.indexOf(step) + 1;
   };
 
   const handleNext = useCallback(async () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
-    switch (step) {
-      case 'welcome':
-        setStep('personality');
-        break;
-      case 'personality':
-        if (currentPersonalityIndex < PERSONALITY_QUESTIONS.length - 1) {
-          setCurrentPersonalityIndex(prev => prev + 1);
-        } else {
-          setStep('social');
-        }
-        break;
-      case 'social':
-        setStep('context');
-        break;
-      case 'context':
-        setStep('practical');
-        break;
-      case 'practical':
-        await handleComplete();
-        break;
+    const currentIndex = STEP_ORDER.indexOf(step);
+    if (currentIndex < STEP_ORDER.length - 2) {
+      // Not at self_description yet
+      setStep(STEP_ORDER[currentIndex + 1]);
+    } else if (step === 'self_description') {
+      await handleComplete();
     }
-  }, [step, currentPersonalityIndex]);
+  }, [step, profileData]);
 
   const handleBack = useCallback(() => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
-    switch (step) {
-      case 'personality':
-        if (currentPersonalityIndex > 0) {
-          setCurrentPersonalityIndex(prev => prev - 1);
-        } else {
-          setStep('welcome');
-        }
-        break;
-      case 'social':
-        setCurrentPersonalityIndex(PERSONALITY_QUESTIONS.length - 1);
-        setStep('personality');
-        break;
-      case 'context':
-        setStep('social');
-        break;
-      case 'practical':
-        setStep('context');
-        break;
+    const currentIndex = STEP_ORDER.indexOf(step);
+    if (currentIndex > 0 && step !== 'complete') {
+      setStep(STEP_ORDER[currentIndex - 1]);
     }
-  }, [step, currentPersonalityIndex]);
+  }, [step]);
 
   const handleComplete = async () => {
     setIsLoading(true);
     try {
       // Save all profile data
-      // For multi-select fields, join array values or use first value
       await updateUserProfile({
-        introvert_extrovert: personality.introvert_extrovert,
-        spontaneous_planner: personality.spontaneous_planner,
-        adventurous_comfort: personality.adventurous_comfort,
-        energy_level: personality.energy_level,
-        preferred_group_size: social.preferred_group_size.length > 0
-          ? social.preferred_group_size.join(',')
-          : 'flexible' as any,
-        social_context: social.social_context.length > 0
-          ? social.social_context.join(',')
-          : 'mixed' as any,
-        budget_sensitivity: practical.budget_sensitivity as any,
-        time_preference: practical.time_preference as any,
-        pace_preference: practical.pace_preference as any,
+        age_range: profileData.age_range as any,
+        gender: profileData.gender as any,
+        wake_up_time: profileData.wake_up_time,
+        bed_time: profileData.bed_time,
+        hobbies: profileData.hobbies || null,
+        tone: profileData.tone as any,
+        self_description: profileData.self_description || null,
       });
 
       await completeOnboarding();
@@ -284,79 +152,139 @@ export default function OnboardingFlow() {
     router.replace('/(tabs)');
   };
 
+  const updateProfile = (key: keyof typeof profileData, value: any) => {
+    setProfileData(prev => ({ ...prev, [key]: value }));
+  };
+
+  // Check if current step has valid input
+  const canProceed = (): boolean => {
+    switch (step) {
+      case 'age':
+        return !!profileData.age_range;
+      case 'gender':
+        return !!profileData.gender;
+      case 'wake_time':
+        return !!profileData.wake_up_time;
+      case 'bed_time':
+        return !!profileData.bed_time;
+      case 'hobbies':
+        return profileData.hobbies.trim().length > 0;
+      case 'tone':
+        return !!profileData.tone;
+      case 'self_description':
+        return profileData.self_description.trim().length > 0;
+      default:
+        return true;
+    }
+  };
+
   // Render current step
   const renderStep = () => {
     switch (step) {
       case 'welcome':
         return <WelcomeStep onGetStarted={handleNext} onSkip={handleSkip} />;
 
-      case 'personality':
-        const currentQuestion = PERSONALITY_QUESTIONS[currentPersonalityIndex];
-        const currentValue = personality[currentQuestion.id as keyof typeof personality];
+      case 'age':
         return (
-          <PersonalityStep
-            key={currentQuestion.id}
-            question={currentQuestion}
-            value={currentValue}
-            onValueChange={(value) => {
-              setPersonality(prev => ({
-                ...prev,
-                [currentQuestion.id]: value,
-              }));
-            }}
+          <SelectionStep
+            title="What's your age range?"
+            subtitle="This helps us personalize your experience"
+            options={AGE_OPTIONS}
+            value={profileData.age_range}
+            onSelect={(value) => updateProfile('age_range', value)}
             onNext={handleNext}
             onBack={handleBack}
-            currentIndex={currentPersonalityIndex}
-            totalQuestions={PERSONALITY_QUESTIONS.length}
+            canProceed={canProceed()}
           />
         );
 
-      case 'social':
+      case 'gender':
         return (
-          <MultiSelectOptionStep
-            key="social"
-            config={SOCIAL_OPTIONS.group_size}
-            values={social.preferred_group_size}
-            onToggle={(value) => setSocial(prev => ({
-              ...prev,
-              preferred_group_size: prev.preferred_group_size.includes(value)
-                ? prev.preferred_group_size.filter(v => v !== value)
-                : [...prev.preferred_group_size, value],
-            }))}
+          <SelectionStep
+            title="How do you identify?"
+            subtitle="Optional - helps us personalize content"
+            options={GENDER_OPTIONS}
+            value={profileData.gender}
+            onSelect={(value) => updateProfile('gender', value)}
             onNext={handleNext}
             onBack={handleBack}
+            canProceed={canProceed()}
           />
         );
 
-      case 'context':
+      case 'wake_time':
         return (
-          <MultiSelectOptionStep
-            key="context"
-            config={SOCIAL_OPTIONS.social_context}
-            values={social.social_context}
-            onToggle={(value) => setSocial(prev => ({
-              ...prev,
-              social_context: prev.social_context.includes(value)
-                ? prev.social_context.filter(v => v !== value)
-                : [...prev.social_context, value],
-            }))}
+          <TimeStep
+            title="When do you usually wake up?"
+            subtitle="We'll optimize notifications and reminders for your schedule"
+            icon="sunny-outline"
+            value={profileData.wake_up_time}
+            onChange={(value) => updateProfile('wake_up_time', value)}
             onNext={handleNext}
             onBack={handleBack}
+            canProceed={canProceed()}
           />
         );
 
-      case 'practical':
+      case 'bed_time':
         return (
-          <PracticalStep
-            budget={practical.budget_sensitivity}
-            time={practical.time_preference}
-            pace={practical.pace_preference}
-            onBudgetChange={(value) => setPractical(prev => ({ ...prev, budget_sensitivity: value }))}
-            onTimeChange={(value) => setPractical(prev => ({ ...prev, time_preference: value }))}
-            onPaceChange={(value) => setPractical(prev => ({ ...prev, pace_preference: value }))}
+          <TimeStep
+            title="When do you usually go to bed?"
+            subtitle="We'll respect your wind-down time"
+            icon="moon-outline"
+            value={profileData.bed_time}
+            onChange={(value) => updateProfile('bed_time', value)}
             onNext={handleNext}
             onBack={handleBack}
+            canProceed={canProceed()}
+          />
+        );
+
+      case 'hobbies':
+        return (
+          <TextInputStep
+            title="What are your hobbies?"
+            subtitle="This helps the AI understand you better"
+            placeholder="e.g., Reading, hiking, photography, cooking..."
+            value={profileData.hobbies}
+            onChange={(value) => updateProfile('hobbies', value)}
+            onNext={handleNext}
+            onBack={handleBack}
+            canProceed={canProceed()}
+            icon="heart-outline"
+            multiline
+          />
+        );
+
+      case 'tone':
+        return (
+          <SelectionStep
+            title="How should the app sound to you?"
+            subtitle="Choose the communication style you prefer"
+            options={TONE_OPTIONS}
+            value={profileData.tone}
+            onSelect={(value) => updateProfile('tone', value)}
+            onNext={handleNext}
+            onBack={handleBack}
+            canProceed={canProceed()}
+          />
+        );
+
+      case 'self_description':
+        return (
+          <TextInputStep
+            title="Who do you think you are?"
+            subtitle="Describe yourself briefly - this helps personalize your experience"
+            placeholder="e.g., A creative entrepreneur who loves learning new things..."
+            value={profileData.self_description}
+            onChange={(value) => updateProfile('self_description', value)}
+            onNext={handleNext}
+            onBack={handleBack}
+            canProceed={canProceed()}
             isLoading={isLoading}
+            isLast
+            maxLength={150}
+            icon="person-outline"
           />
         );
 
@@ -429,15 +357,15 @@ function WelcomeStep({
       <Animated.View style={[styles.welcomeTextContainer, textStyle]}>
         <Text style={styles.welcomeTitle}>Let's personalize{'\n'}your experience</Text>
         <Text style={styles.welcomeSubtitle}>
-          Answer a few quick questions so we can create plans that are perfectly tailored to you.
+          Answer a few quick questions so we can tailor the app to your preferences.
         </Text>
       </Animated.View>
 
       {/* Benefits */}
       <Animated.View style={[styles.benefitsContainer, textStyle]}>
-        <BenefitItem icon="heart" text="Plans that match your personality" />
-        <BenefitItem icon="time" text="Recommendations for your schedule" />
-        <BenefitItem icon="sparkles" text="Better suggestions over time" />
+        <BenefitItem icon="time" text="Smart scheduling based on your routine" />
+        <BenefitItem icon="chatbubble" text="Communication in your preferred tone" />
+        <BenefitItem icon="sparkles" text="AI that truly understands you" />
       </Animated.View>
 
       {/* CTA */}
@@ -464,251 +392,178 @@ function BenefitItem({ icon, text }: { icon: keyof typeof Ionicons.glyphMap; tex
   );
 }
 
-function PersonalityStep({
-  question,
-  value,
-  onValueChange,
-  onNext,
-  onBack,
-  currentIndex,
-  totalQuestions,
-}: {
-  question: typeof PERSONALITY_QUESTIONS[0];
-  value: number;
-  onValueChange: (value: number) => void;
-  onNext: () => void;
-  onBack: () => void;
-  currentIndex: number;
-  totalQuestions: number;
-}) {
-  return (
-    <OnboardingScreen
-      title={question.title}
-      subtitle={question.subtitle}
-      footer={
-        <View style={styles.footerButtons}>
-          <AnimatedPressable onPress={onBack} style={styles.backButton}>
-            <Ionicons name="arrow-back" size={24} color={colors.neutral[600]} />
-          </AnimatedPressable>
-          <View style={styles.nextButtonContainer}>
-            <PremiumButton onPress={onNext} gradient size="lg">
-              {currentIndex < totalQuestions - 1 ? 'Next' : 'Continue'}
-            </PremiumButton>
-          </View>
-        </View>
-      }
-    >
-      <View style={styles.personalityContent}>
-        <OnboardingSlider
-          value={value}
-          onValueChange={onValueChange}
-          leftLabel={question.leftLabel}
-          rightLabel={question.rightLabel}
-          leftEmoji={question.leftEmoji}
-          rightEmoji={question.rightEmoji}
-        />
-
-        {/* Description cards */}
-        <View style={styles.descriptionCards}>
-          <View style={[styles.descriptionCard, value <= 5 && styles.descriptionCardActive]}>
-            <Text style={styles.descriptionEmoji}>{question.leftEmoji}</Text>
-            <Text style={styles.descriptionText}>{question.leftDesc}</Text>
-          </View>
-          <View style={[styles.descriptionCard, value > 5 && styles.descriptionCardActive]}>
-            <Text style={styles.descriptionEmoji}>{question.rightEmoji}</Text>
-            <Text style={styles.descriptionText}>{question.rightDesc}</Text>
-          </View>
-        </View>
-      </View>
-    </OnboardingScreen>
-  );
-}
-
-function OptionStep({
-  config,
+function SelectionStep({
+  title,
+  subtitle,
+  options,
   value,
   onSelect,
   onNext,
   onBack,
+  canProceed,
 }: {
-  config: typeof PRACTICAL_OPTIONS.budget;
-  value: string;
+  title: string;
+  subtitle: string;
+  options: Array<{ value: string; label: string; emoji: string; description: string }>;
+  value: string | null;
   onSelect: (value: string) => void;
   onNext: () => void;
   onBack: () => void;
+  canProceed: boolean;
 }) {
   return (
     <OnboardingScreen
-      title={config.title}
-      subtitle={config.subtitle}
+      title={title}
+      subtitle={subtitle}
       footer={
         <View style={styles.footerButtons}>
           <AnimatedPressable onPress={onBack} style={styles.backButton}>
             <Ionicons name="arrow-back" size={24} color={colors.neutral[600]} />
           </AnimatedPressable>
           <View style={styles.nextButtonContainer}>
-            <PremiumButton onPress={onNext} gradient size="lg" disabled={!value}>
+            <PremiumButton onPress={onNext} gradient size="lg" disabled={!canProceed}>
               Continue
             </PremiumButton>
           </View>
         </View>
       }
     >
-      <View style={styles.optionsContainer}>
-        {config.options.map((option) => (
-          <OnboardingOption
-            key={option.value}
-            label={option.label}
-            description={option.description}
-            emoji={option.emoji}
-            selected={value === option.value}
-            onSelect={() => onSelect(option.value)}
-          />
-        ))}
-      </View>
+      <ScrollView style={styles.optionsScrollView} showsVerticalScrollIndicator={false}>
+        <View style={styles.optionsContainer}>
+          {options.map((option) => (
+            <OnboardingOption
+              key={option.value}
+              label={option.label}
+              description={option.description}
+              emoji={option.emoji}
+              selected={value === option.value}
+              onSelect={() => onSelect(option.value)}
+            />
+          ))}
+        </View>
+      </ScrollView>
     </OnboardingScreen>
   );
 }
 
-function MultiSelectOptionStep({
-  config,
-  values,
-  onToggle,
+function TimeStep({
+  title,
+  subtitle,
+  icon,
+  value,
+  onChange,
   onNext,
   onBack,
+  canProceed,
 }: {
-  config: typeof SOCIAL_OPTIONS.group_size;
-  values: string[];
-  onToggle: (value: string) => void;
+  title: string;
+  subtitle: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  value: string | null;
+  onChange: (value: string) => void;
   onNext: () => void;
   onBack: () => void;
+  canProceed: boolean;
 }) {
   return (
     <OnboardingScreen
-      title={config.title}
-      subtitle={config.subtitle}
+      title={title}
+      subtitle={subtitle}
       footer={
         <View style={styles.footerButtons}>
           <AnimatedPressable onPress={onBack} style={styles.backButton}>
             <Ionicons name="arrow-back" size={24} color={colors.neutral[600]} />
           </AnimatedPressable>
           <View style={styles.nextButtonContainer}>
-            <PremiumButton onPress={onNext} gradient size="lg" disabled={values.length === 0}>
+            <PremiumButton onPress={onNext} gradient size="lg" disabled={!canProceed}>
               Continue
             </PremiumButton>
           </View>
         </View>
       }
     >
-      <View style={styles.optionsContainer}>
-        {config.options.map((option) => (
-          <OnboardingOption
-            key={option.value}
-            label={option.label}
-            description={option.description}
-            emoji={option.emoji}
-            selected={values.includes(option.value)}
-            onSelect={() => onToggle(option.value)}
-            multiSelect
-          />
-        ))}
+      <View style={styles.timePickerContainer}>
+        <OnboardingTimePicker
+          label="Select time"
+          value={value}
+          onChange={onChange}
+          icon={icon}
+        />
       </View>
     </OnboardingScreen>
   );
 }
 
-function PracticalStep({
-  budget,
-  time,
-  pace,
-  onBudgetChange,
-  onTimeChange,
-  onPaceChange,
+function TextInputStep({
+  title,
+  subtitle,
+  placeholder,
+  value,
+  onChange,
   onNext,
   onBack,
-  isLoading,
+  canProceed,
+  isLoading = false,
+  isLast = false,
+  maxLength,
+  icon,
+  multiline = false,
 }: {
-  budget: string;
-  time: string;
-  pace: string;
-  onBudgetChange: (value: string) => void;
-  onTimeChange: (value: string) => void;
-  onPaceChange: (value: string) => void;
+  title: string;
+  subtitle: string;
+  placeholder: string;
+  value: string;
+  onChange: (value: string) => void;
   onNext: () => void;
   onBack: () => void;
-  isLoading: boolean;
+  canProceed: boolean;
+  isLoading?: boolean;
+  isLast?: boolean;
+  maxLength?: number;
+  icon?: keyof typeof Ionicons.glyphMap;
+  multiline?: boolean;
 }) {
-  const [section, setSection] = useState<'budget' | 'time' | 'pace'>('budget');
-
-  const handleSectionNext = () => {
-    if (section === 'budget') {
-      setSection('time');
-    } else if (section === 'time') {
-      setSection('pace');
-    } else {
-      onNext();
-    }
-  };
-
-  const handleSectionBack = () => {
-    if (section === 'budget') {
-      onBack();
-    } else if (section === 'time') {
-      setSection('budget');
-    } else {
-      setSection('time');
-    }
-  };
-
-  const getCurrentConfig = () => {
-    switch (section) {
-      case 'budget':
-        return { ...PRACTICAL_OPTIONS.budget, value: budget, onChange: onBudgetChange };
-      case 'time':
-        return { ...PRACTICAL_OPTIONS.time, value: time, onChange: onTimeChange };
-      case 'pace':
-        return { ...PRACTICAL_OPTIONS.pace, value: pace, onChange: onPaceChange };
-    }
-  };
-
-  const config = getCurrentConfig();
-
   return (
-    <OnboardingScreen
-      title={config.title}
-      subtitle={config.subtitle}
-      footer={
-        <View style={styles.footerButtons}>
-          <AnimatedPressable onPress={handleSectionBack} style={styles.backButton}>
-            <Ionicons name="arrow-back" size={24} color={colors.neutral[600]} />
-          </AnimatedPressable>
-          <View style={styles.nextButtonContainer}>
-            <PremiumButton
-              onPress={handleSectionNext}
-              gradient
-              size="lg"
-              loading={isLoading}
-              disabled={!config.value}
-            >
-              {section === 'pace' ? 'Finish Setup' : 'Continue'}
-            </PremiumButton>
-          </View>
-        </View>
-      }
+    <KeyboardAvoidingView
+      style={styles.keyboardAvoidingView}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
-      <View style={styles.optionsContainer}>
-        {config.options.map((option) => (
-          <OnboardingOption
-            key={option.value}
-            label={option.label}
-            description={option.description}
-            emoji={option.emoji}
-            selected={config.value === option.value}
-            onSelect={() => config.onChange(option.value)}
+      <OnboardingScreen
+        title={title}
+        subtitle={subtitle}
+        footer={
+          <View style={styles.footerButtons}>
+            <AnimatedPressable onPress={onBack} style={styles.backButton}>
+              <Ionicons name="arrow-back" size={24} color={colors.neutral[600]} />
+            </AnimatedPressable>
+            <View style={styles.nextButtonContainer}>
+              <PremiumButton
+                onPress={onNext}
+                gradient
+                size="lg"
+                disabled={!canProceed}
+                loading={isLoading}
+              >
+                {isLast ? 'Finish Setup' : 'Continue'}
+              </PremiumButton>
+            </View>
+          </View>
+        }
+      >
+        <View style={styles.textInputContainer}>
+          <OnboardingTextInput
+            label=""
+            placeholder={placeholder}
+            value={value}
+            onChange={onChange}
+            maxLength={maxLength}
+            icon={icon}
+            multiline={multiline}
+            numberOfLines={multiline ? 4 : 1}
           />
-        ))}
-      </View>
-    </OnboardingScreen>
+        </View>
+      </OnboardingScreen>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -754,7 +609,7 @@ function CompleteStep() {
         entering={FadeIn.delay(600)}
         style={styles.completeSubtitle}
       >
-        We'll use your preferences to create personalized plans just for you.
+        We'll use your preferences to create a personalized experience just for you.
       </Animated.Text>
     </SafeAreaView>
   );
@@ -772,6 +627,9 @@ const styles = StyleSheet.create({
   progressContainer: {
     paddingHorizontal: spacing[5],
     paddingBottom: spacing[4],
+  },
+  keyboardAvoidingView: {
+    flex: 1,
   },
 
   // Welcome step
@@ -845,41 +703,25 @@ const styles = StyleSheet.create({
     color: colors.neutral[500],
   },
 
-  // Personality step
-  personalityContent: {
-    flex: 1,
-    justifyContent: 'center',
-  },
-  descriptionCards: {
-    flexDirection: 'row',
-    marginTop: spacing[8],
-    gap: spacing[3],
-  },
-  descriptionCard: {
-    flex: 1,
-    padding: spacing[4],
-    backgroundColor: colors.neutral[100],
-    borderRadius: borderRadius.lg,
-    alignItems: 'center',
-    opacity: 0.6,
-  },
-  descriptionCardActive: {
-    backgroundColor: colors.primary[50],
-    opacity: 1,
-  },
-  descriptionEmoji: {
-    fontSize: 24,
-    marginBottom: spacing[2],
-  },
-  descriptionText: {
-    ...textPresets.bodySmall,
-    textAlign: 'center',
-    color: colors.neutral[600],
-  },
-
   // Options step
+  optionsScrollView: {
+    flex: 1,
+  },
   optionsContainer: {
     paddingTop: spacing[2],
+  },
+
+  // Time picker step
+  timePickerContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    paddingVertical: spacing[4],
+  },
+
+  // Text input step
+  textInputContainer: {
+    flex: 1,
+    paddingTop: spacing[4],
   },
 
   // Footer

@@ -303,9 +303,17 @@ export interface PlaceDetails {
 export const autocompleteAddress = async (
   input: string,
 ): Promise<AddressSuggestion[]> => {
-  if (!isConfigured() || !input.trim()) return [];
+  console.log('[GooglePlaces] autocompleteAddress called with:', input);
+  console.log('[GooglePlaces] isConfigured:', isConfigured());
+
+  if (!isConfigured()) {
+    console.warn('[GooglePlaces] API key not configured - check GOOGLE_PLACES_API_KEY');
+    return [];
+  }
+  if (!input.trim()) return [];
 
   try {
+    console.log('[GooglePlaces] Making API request to:', AUTOCOMPLETE_API_URL);
     const response = await fetch(AUTOCOMPLETE_API_URL, {
       method: 'POST',
       headers: {
@@ -317,6 +325,8 @@ export const autocompleteAddress = async (
       }),
     });
 
+    console.log('[GooglePlaces] Response status:', response.status);
+
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
       console.error('[GooglePlaces] Autocomplete API error:', response.status, errorData);
@@ -324,7 +334,9 @@ export const autocompleteAddress = async (
     }
 
     const data = await response.json();
-    return (data.suggestions || [])
+    console.log('[GooglePlaces] Response data:', JSON.stringify(data).substring(0, 500));
+
+    const results = (data.suggestions || [])
       .filter((s: any) => s.placePrediction)
       .map((s: any) => ({
         placeId: s.placePrediction.placeId,
@@ -332,6 +344,9 @@ export const autocompleteAddress = async (
         secondaryText: s.placePrediction.structuredFormat?.secondaryText?.text || '',
         fullText: s.placePrediction.text?.text || '',
       }));
+
+    console.log('[GooglePlaces] Parsed results:', results.length);
+    return results;
   } catch (error) {
     console.error('[GooglePlaces] Autocomplete failed:', error);
     return [];

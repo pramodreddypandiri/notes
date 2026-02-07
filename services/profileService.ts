@@ -18,19 +18,32 @@ export interface UserProfile {
   id: string;
   user_id: string;
 
-  // Personality spectrum (1-10)
+  // Basic demographics (collected during onboarding)
+  age_range: '18-24' | '25-34' | '35-44' | '45-54' | '55-64' | '65+' | null;
+  gender: 'male' | 'female' | 'non_binary' | 'prefer_not_to_say' | null;
+
+  // Sleep schedule
+  wake_up_time: string | null; // HH:mm format
+  bed_time: string | null; // HH:mm format
+
+  // Personalization
+  hobbies: string | null; // Free text
+  tone: 'professional' | 'friendly' | 'casual' | 'motivational' | null;
+  self_description: string | null; // Under 150 chars - "Who do you think you are?"
+
+  // Legacy personality spectrum (1-10) - kept for backward compatibility
   introvert_extrovert: number;
   spontaneous_planner: number;
   adventurous_comfort: number;
   energy_level: number;
   decisiveness: number;
 
-  // Social preferences
+  // Legacy social preferences
   preferred_group_size: 'solo' | 'couple' | 'small_group' | 'large_group' | 'flexible';
   social_openness: 'low' | 'moderate' | 'high';
   social_context: 'date_night' | 'friends' | 'family' | 'solo' | 'mixed';
 
-  // Practical preferences
+  // Legacy practical preferences
   budget_sensitivity: 'budget' | 'moderate' | 'splurge' | 'flexible';
   time_preference: 'morning' | 'afternoon' | 'evening' | 'night' | 'flexible';
   crowd_tolerance: 'low' | 'moderate' | 'high';
@@ -643,31 +656,72 @@ export async function buildAIProfileContext(): Promise<string> {
     const patterns = await getPlanPatterns();
 
     if (!profile) {
-      return 'No user profile available. Generate a balanced, general plan.';
+      return 'No user profile available. Generate a balanced, general response.';
     }
 
     const lines: string[] = ['## User Profile'];
 
-    // Personality traits
-    lines.push('\n### Personality:');
-    lines.push(`- Social energy: ${describeScale(profile.introvert_extrovert, 'introverted', 'extroverted')}`);
-    lines.push(`- Planning style: ${describeScale(profile.spontaneous_planner, 'likes to plan ahead', 'prefers spontaneity')}`);
-    lines.push(`- Adventure level: ${describeScale(profile.adventurous_comfort, 'comfort-seeking', 'adventurous')}`);
-    lines.push(`- Energy level: ${describeScale(profile.energy_level, 'prefers relaxed activities', 'enjoys high-energy activities')}`);
+    // Basic demographics
+    if (profile.age_range) {
+      lines.push(`\n### Demographics:`);
+      lines.push(`- Age range: ${profile.age_range}`);
+      if (profile.gender && profile.gender !== 'prefer_not_to_say') {
+        lines.push(`- Gender: ${profile.gender.replace('_', ' ')}`);
+      }
+    }
 
-    // Social preferences
-    lines.push('\n### Social Preferences:');
-    lines.push(`- Typical group: ${formatGroupSize(profile.preferred_group_size)}`);
-    lines.push(`- Social openness: ${profile.social_openness}`);
-    lines.push(`- Context: ${profile.social_context.replace('_', ' ')}`);
+    // Sleep schedule
+    if (profile.wake_up_time || profile.bed_time) {
+      lines.push('\n### Schedule:');
+      if (profile.wake_up_time) {
+        lines.push(`- Wake up time: ${profile.wake_up_time}`);
+      }
+      if (profile.bed_time) {
+        lines.push(`- Bed time: ${profile.bed_time}`);
+      }
+    }
 
-    // Practical preferences
-    lines.push('\n### Practical Preferences:');
-    lines.push(`- Budget: ${profile.budget_sensitivity}`);
-    lines.push(`- Preferred time: ${profile.time_preference}`);
-    lines.push(`- Crowd tolerance: ${profile.crowd_tolerance}`);
-    lines.push(`- Pace: ${profile.pace_preference}`);
-    lines.push(`- Max travel: ${profile.max_travel_distance} miles`);
+    // Self description
+    if (profile.self_description) {
+      lines.push(`\n### Who they are: "${profile.self_description}"`);
+    }
+
+    // Hobbies
+    if (profile.hobbies) {
+      lines.push(`\n### Hobbies: ${profile.hobbies}`);
+    }
+
+    // Communication tone preference
+    if (profile.tone) {
+      lines.push(`\n### Preferred tone: ${profile.tone}`);
+    }
+
+    // Legacy personality traits (if set)
+    if (profile.introvert_extrovert !== 5 || profile.spontaneous_planner !== 5) {
+      lines.push('\n### Personality:');
+      lines.push(`- Social energy: ${describeScale(profile.introvert_extrovert, 'introverted', 'extroverted')}`);
+      lines.push(`- Planning style: ${describeScale(profile.spontaneous_planner, 'likes to plan ahead', 'prefers spontaneity')}`);
+      lines.push(`- Adventure level: ${describeScale(profile.adventurous_comfort, 'comfort-seeking', 'adventurous')}`);
+      lines.push(`- Energy level: ${describeScale(profile.energy_level, 'prefers relaxed activities', 'enjoys high-energy activities')}`);
+    }
+
+    // Legacy social preferences (if non-default)
+    if (profile.preferred_group_size !== 'flexible') {
+      lines.push('\n### Social Preferences:');
+      lines.push(`- Typical group: ${formatGroupSize(profile.preferred_group_size)}`);
+      lines.push(`- Social openness: ${profile.social_openness}`);
+      lines.push(`- Context: ${profile.social_context.replace('_', ' ')}`);
+    }
+
+    // Legacy practical preferences (if non-default)
+    if (profile.budget_sensitivity !== 'flexible' || profile.time_preference !== 'flexible') {
+      lines.push('\n### Practical Preferences:');
+      lines.push(`- Budget: ${profile.budget_sensitivity}`);
+      lines.push(`- Preferred time: ${profile.time_preference}`);
+      lines.push(`- Crowd tolerance: ${profile.crowd_tolerance}`);
+      lines.push(`- Pace: ${profile.pace_preference}`);
+      lines.push(`- Max travel: ${profile.max_travel_distance} miles`);
+    }
 
     // Interests and dislikes
     if (profile.inferred_interests.length > 0) {
