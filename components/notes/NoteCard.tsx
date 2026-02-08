@@ -3,8 +3,8 @@
  *
  * Features:
  * - Swipe to delete with haptic feedback
- * - Tag display with colored badges
- * - Reminder time indicator
+ * - Note type badge (Journal/Task/Reminder)
+ * - Scheduled notification time indicator
  * - Long-press for quick actions
  * - Smooth entrance animation
  */
@@ -25,7 +25,7 @@ import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import AnimatedPressable from '../ui/AnimatedPressable';
-import { colors, typography, spacing, borderRadius, shadows, animation, tagColors, getThemedColors } from '../../theme';
+import { colors, typography, spacing, borderRadius, shadows, animation, getThemedColors } from '../../theme';
 import { useTheme } from '../../context/ThemeContext';
 import notificationService from '../../services/notificationService';
 
@@ -84,13 +84,6 @@ const cleanReminderPrefix = (text: string): string =>
     .replace(/^don'?t forget (to )?(that )?/i, '')
     .trim();
 
-const TAG_ICONS: Record<NoteTag, string> = {
-  reminder: 'alarm',
-};
-
-const TAG_LABELS: Record<NoteTag, string> = {
-  reminder: 'Reminder',
-};
 
 // Enrichment Section Component
 function EnrichmentSection({
@@ -330,30 +323,6 @@ export function NoteCard({
                 )}
               </View>
 
-              {/* Tags */}
-              {note.tags && note.tags.length > 0 && (
-                <View style={styles.tagsContainer}>
-                  {note.tags.map((tag) => (
-                    <View
-                      key={tag}
-                      style={[
-                        styles.tag,
-                        { backgroundColor: tagColors[tag].background },
-                      ]}
-                    >
-                      <Ionicons
-                        name={TAG_ICONS[tag] as any}
-                        size={12}
-                        color={tagColors[tag].icon}
-                      />
-                      <Text style={[styles.tagText, { color: tagColors[tag].text }]}>
-                        {TAG_LABELS[tag]}
-                      </Text>
-                    </View>
-                  ))}
-                </View>
-              )}
-
               {/* Reminder time */}
               {note.reminder_time && (
                 <View style={styles.reminderContainer}>
@@ -448,24 +417,6 @@ const styles = StyleSheet.create({
   noteTypeText: {
     fontSize: 10,
     fontWeight: typography.fontWeight.medium,
-  },
-  tagsContainer: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: spacing[2],
-    marginTop: spacing[3],
-  },
-  tag: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing[1],
-    paddingHorizontal: spacing[2],
-    paddingVertical: spacing[1],
-    borderRadius: borderRadius.full,
-  },
-  tagText: {
-    fontSize: typography.fontSize.xs,
-    fontWeight: typography.fontWeight.semibold,
   },
   reminderContainer: {
     marginTop: spacing[3],
