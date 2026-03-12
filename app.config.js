@@ -9,7 +9,7 @@ export default {
     userInterfaceStyle: "automatic",
     newArchEnabled: true,
     ios: {
-      supportsTablet: true,
+      supportsTablet: false,
       bundleIdentifier: "com.notesapp.voicenotes",
       infoPlist: {
         NSSpeechRecognitionUsageDescription: "This app uses speech recognition to convert your voice notes to text.",
