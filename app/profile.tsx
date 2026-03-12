@@ -512,7 +512,7 @@ export default function ProfileScreen() {
                     </View>
                   </View>
                   <Text style={[styles.profileHint, { color: themedColors.text.tertiary }]}>
-                    Your preferences help us create better plans for you.
+                    Your preferences help us create better experience for you.
                   </Text>
                 </View>
                 <View style={[styles.divider, { backgroundColor: themedColors.surface.border }]} />
@@ -592,8 +592,7 @@ export default function ProfileScreen() {
             />
 
             <Text style={[styles.hint, { color: themedColors.text.tertiary, marginTop: spacing[3] }]}>
-              We use your location to find nearby activities and places for your
-              weekend plans.
+              We use your location to provide location-based reminders.
             </Text>
           </View>
         </Animated.View>
@@ -761,44 +760,6 @@ export default function ProfileScreen() {
                 Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                 router.push('/locations' as any);
               }}
-            />
-          </View>
-        </Animated.View>
-
-        {/* About Section */}
-        <Animated.View
-          entering={FadeInDown.delay(300).springify()}
-          style={styles.section}
-        >
-          <Text style={[styles.sectionTitle, { color: themedColors.text.tertiary }]}>About</Text>
-          <View style={[styles.card, shadows.md, { backgroundColor: themedColors.surface.primary }]}>
-            <SettingsRow
-              icon="information-circle-outline"
-              title="App Version"
-              themedColors={themedColors}
-              trailing={<Text style={[styles.versionText, { color: themedColors.text.tertiary }]}>1.0.0</Text>}
-            />
-
-            <View style={[styles.divider, { backgroundColor: themedColors.surface.border }]} />
-
-            <SettingsRow
-              icon="construct-outline"
-              title="Build"
-              themedColors={themedColors}
-              trailing={<Text style={[styles.versionText, { color: themedColors.text.tertiary }]}>Development</Text>}
-            />
-
-            <View style={[styles.divider, { backgroundColor: themedColors.surface.border }]} />
-
-            <SettingsRow
-              icon="heart-outline"
-              title="Made with"
-              themedColors={themedColors}
-              trailing={
-                <View style={styles.madeWithRow}>
-                  <Text style={[styles.madeWithText, { color: themedColors.text.tertiary }]}>React Native + Expo</Text>
-                </View>
-              }
             />
           </View>
         </Animated.View>
@@ -1231,16 +1192,6 @@ const styles = StyleSheet.create({
   divider: {
     height: 1,
     marginVertical: spacing[3],
-  },
-  versionText: {
-    fontSize: typography.fontSize.sm,
-  },
-  madeWithRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  madeWithText: {
-    fontSize: typography.fontSize.sm,
   },
   bottomSpacer: {
     height: spacing[10],

@@ -81,39 +81,6 @@ export interface FoodPreferences {
   cuisine_adventurousness?: 'low' | 'moderate' | 'high';
 }
 
-export interface PlanPatterns {
-  id: string;
-  user_id: string;
-
-  // Positive patterns
-  liked_activity_types: string[];
-  liked_time_slots: string[];
-  liked_venues: VenuePreference[];
-  liked_plan_structures: string[];
-
-  // Negative patterns
-  disliked_activity_types: string[];
-  disliked_time_slots: string[];
-  disliked_venues: string[];
-  negative_feedback_reasons: string[];
-
-  // Statistics
-  avg_activities_liked: number | null;
-  avg_duration_liked: number | null;
-  avg_distance_liked: number | null;
-  total_plans_generated: number;
-  positive_feedback_count: number;
-  negative_feedback_count: number;
-
-  updated_at: string;
-}
-
-export interface VenuePreference {
-  name: string;
-  rating: number;
-  visits?: number;
-  type?: string;
-}
 
 export interface OnboardingResponse {
   question_id: string;
@@ -170,13 +137,6 @@ export async function createUserProfile(): Promise<UserProfile | null> {
       .single();
 
     if (error) throw error;
-
-    // Also create plan_patterns entry
-    await supabase
-      .from('plan_patterns')
-      .insert({ user_id: user.id })
-      .select()
-      .single();
 
     return data;
   } catch (error) {
@@ -331,161 +291,6 @@ export async function needsOnboarding(): Promise<boolean> {
   }
 }
 
-// ============================================
-// PLAN PATTERNS OPERATIONS
-// ============================================
-
-/**
- * Get user's plan patterns
- */
-export async function getPlanPatterns(): Promise<PlanPatterns | null> {
-  try {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return null;
-
-    const { data, error } = await supabase
-      .from('plan_patterns')
-      .select('*')
-      .eq('user_id', user.id)
-      .single();
-
-    if (error) throw error;
-    return data;
-  } catch (error) {
-    console.error('Failed to get plan patterns:', error);
-    return null;
-  }
-}
-
-/**
- * Record plan feedback
- */
-export async function recordPlanFeedback(
-  planId: string,
-  rating: 'up' | 'down',
-  planData: {
-    activities?: string[];
-    venues?: string[];
-    duration?: number;
-    timeSlot?: string;
-  },
-  reason?: string
-): Promise<boolean> {
-  try {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return false;
-
-    // Get current patterns
-    const patterns = await getPlanPatterns();
-    if (!patterns) return false;
-
-    const updates: Partial<PlanPatterns> = {
-      total_plans_generated: patterns.total_plans_generated + 1,
-    };
-
-    if (rating === 'up') {
-      updates.positive_feedback_count = patterns.positive_feedback_count + 1;
-
-      // Add liked activities
-      if (planData.activities) {
-        const newActivities = [...new Set([
-          ...patterns.liked_activity_types,
-          ...planData.activities,
-        ])];
-        updates.liked_activity_types = newActivities;
-      }
-
-      // Add liked time slot
-      if (planData.timeSlot) {
-        const newSlots = [...new Set([
-          ...patterns.liked_time_slots,
-          planData.timeSlot,
-        ])];
-        updates.liked_time_slots = newSlots;
-      }
-    } else {
-      updates.negative_feedback_count = patterns.negative_feedback_count + 1;
-
-      // Track negative feedback reason
-      if (reason) {
-        const newReasons = [...new Set([
-          ...patterns.negative_feedback_reasons,
-          reason,
-        ])];
-        updates.negative_feedback_reasons = newReasons;
-      }
-    }
-
-    const { error } = await supabase
-      .from('plan_patterns')
-      .update(updates)
-      .eq('user_id', user.id);
-
-    if (error) throw error;
-    return true;
-  } catch (error) {
-    console.error('Failed to record plan feedback:', error);
-    return false;
-  }
-}
-
-/**
- * Record venue preference
- */
-export async function recordVenuePreference(
-  venue: VenuePreference,
-  liked: boolean
-): Promise<boolean> {
-  try {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return false;
-
-    const patterns = await getPlanPatterns();
-    if (!patterns) return false;
-
-    if (liked) {
-      // Check if venue already exists
-      const existingIndex = patterns.liked_venues.findIndex(
-        v => v.name.toLowerCase() === venue.name.toLowerCase()
-      );
-
-      let updatedVenues: VenuePreference[];
-      if (existingIndex >= 0) {
-        // Update existing venue
-        updatedVenues = [...patterns.liked_venues];
-        updatedVenues[existingIndex] = {
-          ...updatedVenues[existingIndex],
-          visits: (updatedVenues[existingIndex].visits || 0) + 1,
-          rating: Math.max(updatedVenues[existingIndex].rating, venue.rating),
-        };
-      } else {
-        // Add new venue
-        updatedVenues = [...patterns.liked_venues, { ...venue, visits: 1 }];
-      }
-
-      await supabase
-        .from('plan_patterns')
-        .update({ liked_venues: updatedVenues })
-        .eq('user_id', user.id);
-    } else {
-      // Add to disliked
-      const dislikedVenues = [...new Set([
-        ...patterns.disliked_venues,
-        venue.name,
-      ])];
-
-      await supabase
-        .from('plan_patterns')
-        .update({ disliked_venues: dislikedVenues })
-        .eq('user_id', user.id);
-    }
-
-    return true;
-  } catch (error) {
-    console.error('Failed to record venue preference:', error);
-    return false;
-  }
-}
 
 // ============================================
 // AI-INFERRED DATA OPERATIONS
@@ -653,7 +458,6 @@ export async function markNotesAnalyzed(count: number): Promise<boolean> {
 export async function buildAIProfileContext(): Promise<string> {
   try {
     const profile = await getUserProfile();
-    const patterns = await getPlanPatterns();
 
     if (!profile) {
       return 'No user profile available. Generate a balanced, general response.';
@@ -758,39 +562,10 @@ export async function buildAIProfileContext(): Promise<string> {
       }
     }
 
-    // Patterns from feedback
-    if (patterns) {
-      lines.push('\n### From Past Feedback:');
-
-      if (patterns.liked_activity_types.length > 0) {
-        lines.push(`- Enjoyed activities: ${patterns.liked_activity_types.join(', ')}`);
-      }
-
-      if (patterns.disliked_activity_types.length > 0) {
-        lines.push(`- Didn't enjoy: ${patterns.disliked_activity_types.join(', ')}`);
-      }
-
-      if (patterns.liked_venues.length > 0) {
-        const topVenues = patterns.liked_venues
-          .sort((a, b) => b.rating - a.rating)
-          .slice(0, 5)
-          .map(v => v.name);
-        lines.push(`- Favorite venues: ${topVenues.join(', ')}`);
-      }
-
-      if (patterns.negative_feedback_reasons.length > 0) {
-        lines.push(`- Past complaints: ${patterns.negative_feedback_reasons.join(', ')}`);
-      }
-
-      if (patterns.avg_activities_liked) {
-        lines.push(`- Preferred plan size: ~${patterns.avg_activities_liked} activities`);
-      }
-    }
-
     return lines.join('\n');
   } catch (error) {
     console.error('Failed to build AI profile context:', error);
-    return 'No user profile available. Generate a balanced, general plan.';
+    return 'No user profile available. Generate a balanced, general response.';
   }
 }
 
@@ -827,9 +602,6 @@ export default {
   updateOnboardingStep,
   completeOnboarding,
   needsOnboarding,
-  getPlanPatterns,
-  recordPlanFeedback,
-  recordVenuePreference,
   addInferredInterest,
   addInferredDislike,
   updateMoodSignals,

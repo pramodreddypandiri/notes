@@ -163,7 +163,7 @@ async function callClaudeForAnalysis(
       ? `Current known interests: ${profile.inferred_interests?.join(', ') || 'none yet'}`
       : 'No existing profile data.';
 
-    const prompt = `Analyze these voice notes from a user of a weekend planning app. Extract insights about their personality, preferences, and current state.
+    const prompt = `Analyze these voice notes from a user. Extract insights about their personality, preferences, and current state.
 
 ${notesContext}
 
@@ -225,7 +225,7 @@ async function callClaudeForQuickAnalysis(note: Note): Promise<{
   mood: Partial<MoodSignals>;
 } | null> {
   try {
-    const prompt = `Quickly extract key information from this voice note for a weekend planning app.
+    const prompt = `Quickly extract key information from this voice note.
 
 Note: "${note.transcript}"
 

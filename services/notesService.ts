@@ -2,7 +2,6 @@ import { supabase } from '../config/supabase';
 import { parseNote, ParsedReminder } from './claudeService';
 import notificationService from './notificationService';
 import reminderService from './reminderService';
-import { searchAndStoreNotePlaces } from './googlePlacesService';
 import taskEnrichmentService from './taskEnrichmentService';
 
 // Keywords that indicate a reminder intent
@@ -157,9 +156,6 @@ export const createNoteWithReminder = async (
       recurrence_day: isJournal ? null : (parsedData.reminder?.recurrenceDay ?? null),
       recurrence_time: isJournal ? '09:00' : (parsedData.reminder?.recurrenceTime || '09:00'),
       reminder_active: isJournal ? false : true,
-      // Place intent fields
-      place_intent: parsedData.placeIntent?.detected || false,
-      place_search_query: parsedData.placeIntent?.searchQuery || null,
       // Life Assistant fields
       note_type: effectiveNoteType,
       priority: calculatePriority(),
@@ -231,12 +227,6 @@ export const createNoteWithReminder = async (
       .single();
 
     if (error) throw error;
-
-    // If place intent detected, search for real nearby places in background
-    if (parsedData.placeIntent?.detected && data) {
-      searchAndStoreNotePlaces(data.id, parsedData.placeIntent.searchQuery)
-        .catch(err => console.error('Failed to search places for note:', err));
-    }
 
     // Enrich task in background (only for tasks, not journals)
     if (data && effectiveNoteType === 'task') {

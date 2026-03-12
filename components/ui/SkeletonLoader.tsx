@@ -100,38 +100,6 @@ export function NoteCardSkeleton() {
   );
 }
 
-// Preset: Plan card skeleton
-export function PlanCardSkeleton() {
-  return (
-    <View style={skeletonStyles.planCard}>
-      <Skeleton width="70%" height={24} />
-      <Skeleton width="40%" height={16} style={{ marginTop: spacing[2] }} />
-
-      {/* Activities */}
-      {[1, 2, 3].map((i) => (
-        <View key={i} style={skeletonStyles.activity}>
-          <Skeleton width={60} height={16} />
-          <View style={skeletonStyles.activityDetails}>
-            <Skeleton width="80%" height={18} />
-            <Skeleton width="50%" height={14} style={{ marginTop: spacing[1] }} />
-          </View>
-        </View>
-      ))}
-
-      {/* Reasoning */}
-      <View style={skeletonStyles.reasoning}>
-        <Skeleton width="100%" height={40} borderRadius={borderRadius.md} />
-      </View>
-
-      {/* Feedback buttons */}
-      <View style={skeletonStyles.feedbackRow}>
-        <Skeleton width="45%" height={48} borderRadius={borderRadius.md} />
-        <Skeleton width="45%" height={48} borderRadius={borderRadius.md} />
-      </View>
-    </View>
-  );
-}
-
 // Preset: Settings row skeleton
 export function SettingsRowSkeleton() {
   return (
@@ -148,16 +116,6 @@ export function NotesListSkeleton({ count = 3 }: { count?: number }) {
     <View style={skeletonStyles.list}>
       {Array.from({ length: count }).map((_, i) => (
         <NoteCardSkeleton key={i} />
-      ))}
-    </View>
-  );
-}
-
-export function PlansListSkeleton({ count = 2 }: { count?: number }) {
-  return (
-    <View style={skeletonStyles.list}>
-      {Array.from({ length: count }).map((_, i) => (
-        <PlanCardSkeleton key={i} />
       ))}
     </View>
   );
@@ -196,31 +154,6 @@ const skeletonStyles = StyleSheet.create({
   },
   noteActions: {
     gap: spacing[2],
-  },
-  planCard: {
-    backgroundColor: colors.neutral[0],
-    padding: spacing[5],
-    borderRadius: borderRadius.lg,
-    marginBottom: spacing[4],
-  },
-  activity: {
-    flexDirection: 'row',
-    marginTop: spacing[4],
-    paddingTop: spacing[4],
-    borderTopWidth: 1,
-    borderTopColor: colors.neutral[100],
-  },
-  activityDetails: {
-    flex: 1,
-    marginLeft: spacing[3],
-  },
-  reasoning: {
-    marginTop: spacing[4],
-  },
-  feedbackRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginTop: spacing[4],
   },
   settingsRow: {
     paddingVertical: spacing[3],

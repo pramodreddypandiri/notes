@@ -1,4 +1,3 @@
-import { buildAIProfileContext } from './profileService';
 import { STORE_CHAINS } from './locationService';
 import { isAIConfigured, callAIForJSON, callAI } from './aiService';
 
@@ -34,13 +33,6 @@ export interface ParsedReminder {
   reminderSummary?: string; // what to remind about
 }
 
-// Place intent detection
-export interface PlaceIntent {
-  detected: boolean;
-  searchQuery: string;
-  placeType?: string;
-}
-
 interface ParsedNote {
   type: 'task' | 'preference' | 'intent' | 'reminder';
   activity?: string;
@@ -52,8 +44,6 @@ interface ParsedNote {
   shoppingItems?: string[];
   // Reminder fields
   reminder?: ParsedReminder;
-  // Place intent
-  placeIntent?: PlaceIntent;
 }
 
 // Check if AI API is configured
@@ -441,62 +431,6 @@ const detectReminderLocally = (transcript: string): ParsedReminder | null => {
   return reminder;
 };
 
-// Local detection of place intent (e.g., "I want to go to a salon")
-const PLACE_TYPE_KEYWORDS = [
-  'salon', 'barbershop', 'spa', 'dentist', 'doctor', 'hospital', 'clinic',
-  'restaurant', 'cafe', 'coffee shop', 'bar', 'pub', 'brewery',
-  'gym', 'yoga studio', 'fitness center',
-  'mechanic', 'auto shop', 'car wash',
-  'hotel', 'motel',
-  'park', 'beach', 'trail',
-  'store', 'shop', 'mall', 'market',
-  'theater', 'cinema', 'museum', 'gallery',
-  'vet', 'veterinarian', 'pet store',
-  'tailor', 'dry cleaner', 'laundromat',
-  'library', 'bookstore',
-  'bank', 'atm', 'post office',
-];
-
-const detectPlaceIntentLocally = (transcript: string): PlaceIntent => {
-  const lower = transcript.toLowerCase();
-
-  // Patterns that indicate wanting to visit a place
-  const intentPatterns = [
-    /(?:want|wanna|need|looking|searching)\s+(?:to\s+)?(?:go\s+to\s+|find\s+|visit\s+)?(?:a\s+|an\s+)?(?:good\s+|nice\s+|great\s+|the\s+best\s+)?(.+?)(?:\s+near(?:by)?|\s+around|\s+close|\s+in\s+town)?$/i,
-    /(?:should|let'?s|let\s+us|gotta)\s+(?:go\s+to|find|visit|try|check\s+out)\s+(?:a\s+|an\s+)?(?:good\s+|nice\s+)?(.+?)$/i,
-    /(?:book|schedule)\s+(?:an?\s+)?(?:appointment\s+(?:at|with)\s+)?(?:a\s+|an\s+)?(.+?)$/i,
-    /(?:i\s+need|we\s+need)\s+(?:a\s+|an\s+)?(?:good\s+|new\s+)?(.+?)$/i,
-  ];
-
-  // Check if transcript contains place-type keywords
-  const matchedKeyword = PLACE_TYPE_KEYWORDS.find(kw => lower.includes(kw));
-
-  for (const pattern of intentPatterns) {
-    const match = lower.match(pattern);
-    if (match && match[1]) {
-      const extracted = match[1].trim();
-      // Validate: must contain a place keyword or be a reasonable length
-      if (matchedKeyword || (extracted.length > 2 && extracted.length < 50)) {
-        return {
-          detected: true,
-          searchQuery: extracted,
-          placeType: matchedKeyword || undefined,
-        };
-      }
-    }
-  }
-
-  // Fallback: if the transcript contains a place keyword with some context
-  if (matchedKeyword && /\b(go|find|visit|need|want|looking|search)\b/i.test(lower)) {
-    return {
-      detected: true,
-      searchQuery: matchedKeyword,
-      placeType: matchedKeyword,
-    };
-  }
-
-  return { detected: false, searchQuery: '' };
-};
 
 export const parseNote = async (transcript: string): Promise<ParsedNote> => {
   // First, detect location category locally (no API needed)
@@ -504,9 +438,6 @@ export const parseNote = async (transcript: string): Promise<ParsedNote> => {
 
   // Detect reminders locally
   const localReminder = detectReminderLocally(transcript);
-
-  // Detect place intent locally
-  const localPlaceIntent = detectPlaceIntentLocally(transcript);
 
   // If Claude API not configured, return simple fallback with local detection
   if (!isClaudeConfigured()) {
@@ -517,7 +448,6 @@ export const parseNote = async (transcript: string): Promise<ParsedNote> => {
       locationCategory: localCategory,
       shoppingItems: shoppingItems.length > 0 ? shoppingItems : undefined,
       reminder: localReminder || undefined,
-      placeIntent: localPlaceIntent.detected ? localPlaceIntent : undefined,
     };
   }
 
@@ -557,11 +487,6 @@ Return format:
     "additionalTimes": string[] (all mentioned times in HH:mm format, when multiple times exist, e.g. ["11:00", "14:00"]),
     "reminderSummary": string (what to remind about)
   } (only if this is a reminder),
-  "placeIntent": {
-    "detected": boolean,
-    "searchQuery": string (the place/business type to search for nearby),
-    "placeType": string (specific business type if clear)
-  } (only if user wants to find/visit a place)
 }
 
 Reminder Detection Guidelines:
@@ -597,9 +522,7 @@ Examples:
 "I have an event on Feb 18th, remind me 2 days before" -> {"type": "reminder", "summary": "Event on Feb 18th", "reminder": {"isReminder": true, "reminderType": "one-time", "eventDate": "2025-02-18", "reminderDaysBefore": 2, "reminderSummary": "Event on Feb 18th"}}
 "Remind me in 45 minutes to take medicine" -> {"type": "reminder", "summary": "Take medicine", "reminder": {"isReminder": true, "reminderType": "one-time", "eventDate": "TODAY_DATE", "recurrenceTime": "CURRENT_TIME_PLUS_45_MINS", "reminderSummary": "Take medicine"}}
 "Remind me after 2 hours to call mom" -> {"type": "reminder", "summary": "Call mom", "reminder": {"isReminder": true, "reminderType": "one-time", "eventDate": "TODAY_OR_TOMORROW_DATE", "recurrenceTime": "CURRENT_TIME_PLUS_2_HOURS", "reminderSummary": "Call mom"}}
-"I'm out of milk" -> {"type": "task", "summary": "Buy: milk", "locationCategory": "grocery", "shoppingItems": ["milk"]}
-"I want to go to a salon" -> {"type": "intent", "summary": "Visit a salon", "placeIntent": {"detected": true, "searchQuery": "salon", "placeType": "salon"}}
-"Need to find a good dentist" -> {"type": "intent", "summary": "Find a dentist", "placeIntent": {"detected": true, "searchQuery": "good dentist", "placeType": "dentist"}}`;
+"I'm out of milk" -> {"type": "task", "summary": "Buy: milk", "locationCategory": "grocery", "shoppingItems": ["milk"]}`;
 
     const parsed = await callAIForJSON(prompt);
 
@@ -615,10 +538,6 @@ Examples:
       parsed.reminder = localReminder;
       parsed.type = 'reminder';
     }
-    // Use local place intent detection as fallback
-    if (!parsed.placeIntent?.detected && localPlaceIntent.detected) {
-      parsed.placeIntent = localPlaceIntent;
-    }
 
     return parsed;
   } catch (error) {
@@ -630,115 +549,7 @@ Examples:
       locationCategory: localCategory,
       shoppingItems: shoppingItems.length > 0 ? shoppingItems : undefined,
       reminder: localReminder || undefined,
-      placeIntent: localPlaceIntent.detected ? localPlaceIntent : undefined,
     };
   }
 };
 
-// Place suggestion interface
-export interface PlaceSuggestion {
-  name: string;
-  address: string;
-  category: 'activity' | 'food' | 'park' | 'shopping' | 'entertainment' | 'fitness' | 'cafe' | 'bar' | 'other';
-  description: string;
-  reason: string;
-  priceRange: '$' | '$$' | '$$$' | '$$$$';
-  source: 'notes' | 'personality' | 'trending';
-}
-
-export const generatePlaceSuggestions = async (
-  notes: any[],
-  userLocation: { lat: number; lng: number; city: string },
-  pastFeedback?: { name: string; status: 'liked' | 'disliked' }[]
-): Promise<PlaceSuggestion[]> => {
-  // Check if AI API is configured
-  if (!isAIConfigured()) {
-    throw new Error('DeepSeek API key not configured. Please add your key to config/env.ts');
-  }
-
-  try {
-    // Get user profile context for personalization
-    const profileContext = await buildAIProfileContext();
-
-    // Prepare context for Claude
-    const notesContext = notes
-      .map(n => `- ${n.transcript} (${n.parsed_data?.summary || ''})`)
-      .join('\n');
-
-    const feedbackContext = pastFeedback && pastFeedback.length > 0
-      ? pastFeedback.map(f => `${f.name}: ${f.status}`).join('\n')
-      : 'No previous feedback';
-
-    const prompt = `You are a personalized place recommendation assistant. Suggest 5-8 places that match this user's interests and personality.
-
-${profileContext}
-
----
-
-USER LOCATION: ${userLocation.city} (${userLocation.lat}, ${userLocation.lng})
-
-USER'S NOTES FROM THIS WEEK:
-${notesContext}
-
-PAST PLACE FEEDBACK (learn from this):
-${feedbackContext}
-
----
-
-SUGGESTION STRATEGY:
-1. NOTES-BASED (2-3 places): Directly match what they mentioned in notes
-   - Example: "want to try sushi" -> suggest a specific sushi restaurant
-   - Example: "need to workout more" -> suggest a gym or fitness class
-
-2. PERSONALITY-BASED (2-3 places): Match their personality profile
-   - Introverts: quieter cafes, less crowded parks, bookstores
-   - Extroverts: lively bars, popular hangouts, group activities
-   - Budget-conscious: affordable options, happy hours
-   - Foodies: unique restaurants, local favorites
-
-3. DISCOVERY (1-2 places): Help them discover something new that fits their profile
-   - Slightly outside their usual but still within their comfort zone
-   - Good for understanding their tastes better based on feedback
-
-IMPORTANT:
-- Learn from past feedback: avoid places similar to disliked ones
-- Suggest more places similar to liked ones
-- Use real, actual place names that would exist in ${userLocation.city}
-- Vary the categories: don't suggest only restaurants
-
-Return ONLY valid JSON array:
-[
-  {
-    "name": "Blue Bottle Coffee",
-    "address": "123 Main Street",
-    "category": "cafe",
-    "description": "Minimalist specialty coffee shop known for single-origin pour-overs",
-    "reason": "Based on your notes about wanting a quiet workspace - this spot has great WiFi and a calm atmosphere",
-    "priceRange": "$$",
-    "source": "notes"
-  },
-  {
-    "name": "Sunset Park",
-    "address": "456 Park Avenue",
-    "category": "park",
-    "description": "Peaceful urban park with walking trails and scenic views",
-    "reason": "You seem to prefer relaxed settings - this is a great spot for unwinding",
-    "priceRange": "$",
-    "source": "personality"
-  }
-]
-
-Categories: activity, food, park, shopping, entertainment, fitness, cafe, bar, other
-Price ranges: $, $$, $$$, $$$$
-Sources: notes (from their voice notes), personality (from their profile), trending (discovery)`;
-
-    return await callAIForJSON<PlaceSuggestion[]>(prompt, { maxTokens: 4096 });
-  } catch (error) {
-    console.error('Failed to generate place suggestions:', error);
-    throw error;
-  }
-};
-
-// Keep the old function for backwards compatibility but mark as deprecated
-/** @deprecated Use generatePlaceSuggestions instead */
-export const generateWeekendPlans = generatePlaceSuggestions as any;

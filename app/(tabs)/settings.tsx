@@ -295,7 +295,7 @@ export default function SettingsScreen() {
                     </View>
                   </View>
                   <Text style={[styles.profileHint, { color: themedColors.text.tertiary }]}>
-                    Your preferences help us create better plans for you.
+                    Your preferences help us personalize your experience.
                   </Text>
                 </View>
                 <View style={[styles.divider, { backgroundColor: themedColors.surface.border }]} />
@@ -320,9 +320,9 @@ export default function SettingsScreen() {
             ) : (
               <>
                 <View style={styles.profileSummary}>
-                  <Text style={[styles.profileLabel, { color: themedColors.text.primary }]}>Get Personalized Plans</Text>
+                  <Text style={[styles.profileLabel, { color: themedColors.text.primary }]}>Personalize Your Experience</Text>
                   <Text style={[styles.profileHint, { color: themedColors.text.tertiary }]}>
-                    Take a quick quiz so we can tailor recommendations to your personality and preferences.
+                    Take a quick quiz so we can tailor the app to your personality and preferences.
                   </Text>
                 </View>
                 <PremiumButton
@@ -391,8 +391,7 @@ export default function SettingsScreen() {
             </PremiumButton>
 
             <Text style={[styles.hint, { color: themedColors.text.tertiary }]}>
-              We use your location to find nearby activities and places for your
-              weekend plans.
+              We use your location to provide location-based reminders.
             </Text>
           </View>
         </Animated.View>
@@ -575,44 +574,6 @@ export default function SettingsScreen() {
             >
               Save Preferences
             </PremiumButton>
-          </View>
-        </Animated.View>
-
-        {/* About Section */}
-        <Animated.View
-          entering={FadeInDown.delay(400).springify()}
-          style={styles.section}
-        >
-          <Text style={[styles.sectionTitle, { color: themedColors.text.tertiary }]}>About</Text>
-          <View style={[styles.card, shadows.md, { backgroundColor: themedColors.surface.primary }]}>
-            <SettingsRow
-              icon="information-circle-outline"
-              title="App Version"
-              themedColors={themedColors}
-              trailing={<Text style={[styles.versionText, { color: themedColors.text.tertiary }]}>1.0.0</Text>}
-            />
-
-            <View style={[styles.divider, { backgroundColor: themedColors.surface.border }]} />
-
-            <SettingsRow
-              icon="construct-outline"
-              title="Build"
-              themedColors={themedColors}
-              trailing={<Text style={[styles.versionText, { color: themedColors.text.tertiary }]}>Development</Text>}
-            />
-
-            <View style={[styles.divider, { backgroundColor: themedColors.surface.border }]} />
-
-            <SettingsRow
-              icon="heart-outline"
-              title="Made with"
-              themedColors={themedColors}
-              trailing={
-                <View style={styles.madeWithRow}>
-                  <Text style={[styles.madeWithText, { color: themedColors.text.tertiary }]}>React Native + Expo</Text>
-                </View>
-              }
-            />
           </View>
         </Animated.View>
 
@@ -839,18 +800,6 @@ const styles = StyleSheet.create({
     height: 1,
     backgroundColor: colors.neutral[100],
     marginVertical: spacing[3],
-  },
-  versionText: {
-    fontSize: typography.fontSize.sm,
-    color: colors.neutral[500],
-  },
-  madeWithRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  madeWithText: {
-    fontSize: typography.fontSize.sm,
-    color: colors.neutral[500],
   },
   bottomSpacer: {
     height: spacing[10],

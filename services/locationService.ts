@@ -1,18 +1,15 @@
 import * as Location from 'expo-location';
-import * as TaskManager from 'expo-task-manager';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import notificationService from './notificationService';
 import { supabase } from '../config/supabase';
 
-// Task names
-const GEOFENCE_TASK = 'location-geofence-task';
-const BACKGROUND_LOCATION_TASK = 'background-location-task';
-
 // Storage keys
 const SAVED_LOCATIONS_KEY = '@saved_locations';
 const LOCATION_SETTINGS_KEY = '@location_settings';
-const LAST_DETECTED_STORE_KEY = '@last_detected_store';
-const STORE_COOLDOWN_MS = 30 * 60 * 1000; // 30 minutes cooldown between same store notifications
+
+// How often to poll location (ms) and minimum distance change (meters)
+const WATCH_TIME_INTERVAL = 30_000; // 30 seconds
+const WATCH_DISTANCE_INTERVAL = 30;  // 30 meters
 
 // User's personal locations (manually added)
 export type LocationType = 'home' | 'work' | 'gym';
@@ -34,7 +31,6 @@ export interface LocationSettings {
   enabled: boolean;
   smartFilteringEnabled: boolean; // Only notify when relevant pending items exist
   leaveHomeReminder: boolean; // "Don't forget!" reminder when leaving home
-  autoDetectStores: boolean; // Automatically detect grocery stores, pharmacies, etc.
 }
 
 // Note categories that can be triggered by locations
@@ -77,117 +73,52 @@ export const STORE_CHAINS: Record<NoteCategory, string[]> = {
   fitness: ['gym', 'fitness', 'ymca', 'planet fitness', '24 hour fitness', 'la fitness'],
   work: ['office', 'workplace', 'work', 'at work', 'to work', 'the office'],
   errand: ['post office', 'bank', 'dry cleaner', 'auto shop'],
-  leaving_home: [], // Not used for store detection, only for home exit reminders
-  arriving_home: [], // Not used for store detection, only for home entry reminders
+  leaving_home: [],
+  arriving_home: [],
   general: [],
 };
 
 class LocationService {
   private isInitialized = false;
-  private static instance: LocationService;
+
+  // Foreground location watcher subscription
+  private locationSubscription: Location.LocationSubscription | null = null;
+
+  // Track which saved-location IDs the user is currently inside
+  private insideLocations: Set<string> = new Set();
 
   /**
    * Initialize the location service
    */
   async initialize(): Promise<void> {
     if (this.isInitialized) return;
-    LocationService.instance = this;
-
-    // Define the geofencing task for user's personal locations (home, work, gym)
-    if (!TaskManager.isTaskDefined(GEOFENCE_TASK)) {
-      TaskManager.defineTask(GEOFENCE_TASK, async ({ data, error }) => {
-        if (error) {
-          console.error('[Geofence] Task error:', error);
-          return;
-        }
-
-        const { eventType, region } = data as {
-          eventType: Location.GeofencingEventType;
-          region: Location.LocationRegion;
-        };
-
-        console.log('[Geofence] Event:', eventType, 'Region:', region.identifier);
-
-        await LocationService.instance.handleGeofenceEvent(eventType, region);
-      });
-    }
-
-    // Define background location task for automatic store detection
-    if (!TaskManager.isTaskDefined(BACKGROUND_LOCATION_TASK)) {
-      TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
-        if (error) {
-          console.error('[BackgroundLocation] Task error:', error);
-          return;
-        }
-
-        const { locations } = data as { locations: Location.LocationObject[] };
-        if (locations && locations.length > 0) {
-          const latestLocation = locations[locations.length - 1];
-          await LocationService.instance.handleLocationUpdate(latestLocation);
-        }
-      });
-    }
-
     this.isInitialized = true;
     console.log('[LocationService] Initialized');
   }
 
   /**
-   * Check if running in Expo Go (which doesn't support background location)
-   */
-  isExpoGo(): boolean {
-    // @ts-ignore - Constants.expoConfig exists in Expo
-    const Constants = require('expo-constants').default;
-    return Constants.appOwnership === 'expo';
-  }
-
-  /**
-   * Request location permissions
+   * Request location permissions (when in use only)
    */
   async requestPermissions(): Promise<boolean> {
     try {
-      // First request foreground permission
-      const { status: foregroundStatus } = await Location.requestForegroundPermissionsAsync();
-      if (foregroundStatus !== 'granted') {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
         console.warn('[LocationService] Foreground permission denied');
         return false;
       }
-
-      // Skip background permission request in Expo Go (not supported)
-      if (this.isExpoGo()) {
-        console.warn('[LocationService] Running in Expo Go - background location not supported');
-        return true; // Return true since foreground works
-      }
-
-      // Then request background permission for geofencing
-      const { status: backgroundStatus } = await Location.requestBackgroundPermissionsAsync();
-      if (backgroundStatus !== 'granted') {
-        console.warn('[LocationService] Background permission denied - geofencing may not work');
-        // Still return true as foreground is granted
-      }
-
       return true;
     } catch (error: any) {
-      // Handle Expo Go limitation error
-      if (error?.message?.includes('NSLocation') || error?.message?.includes('Info.plist')) {
-        console.warn('[LocationService] Running in Expo Go - background location requires a development build');
-        return false;
-      }
       console.error('[LocationService] Permission request error:', error);
       return false;
     }
   }
 
   /**
-   * Check if location permissions are granted
+   * Check if location permissions are granted (when in use only)
    */
-  async hasPermissions(): Promise<{ foreground: boolean; background: boolean }> {
-    const { status: foreground } = await Location.getForegroundPermissionsAsync();
-    const { status: background } = await Location.getBackgroundPermissionsAsync();
-    return {
-      foreground: foreground === 'granted',
-      background: background === 'granted',
-    };
+  async hasPermissions(): Promise<{ foreground: boolean }> {
+    const { status } = await Location.getForegroundPermissionsAsync();
+    return { foreground: status === 'granted' };
   }
 
   /**
@@ -221,7 +152,7 @@ class LocationService {
     locations.push(newLocation);
     await AsyncStorage.setItem(SAVED_LOCATIONS_KEY, JSON.stringify(locations));
 
-    // Start geofencing for this location
+    // Restart watcher so it picks up the new location
     await this.updateGeofencing();
 
     return newLocation;
@@ -247,6 +178,7 @@ class LocationService {
     const locations = await this.getSavedLocations();
     const filtered = locations.filter(loc => loc.id !== locationId);
     await AsyncStorage.setItem(SAVED_LOCATIONS_KEY, JSON.stringify(filtered));
+    this.insideLocations.delete(locationId);
     await this.updateGeofencing();
   }
 
@@ -273,14 +205,12 @@ class LocationService {
         enabled: false,
         smartFilteringEnabled: true,
         leaveHomeReminder: true,
-        autoDetectStores: true,
       };
     } catch (error) {
       return {
         enabled: false,
         smartFilteringEnabled: true,
         leaveHomeReminder: true,
-        autoDetectStores: true,
       };
     }
   }
@@ -295,111 +225,106 @@ class LocationService {
 
     if (updated.enabled) {
       await this.updateGeofencing();
-      if (updated.autoDetectStores) {
-        await this.startBackgroundLocationMonitoring();
-      } else {
-        await this.stopBackgroundLocationMonitoring();
-      }
     } else {
       await this.stopGeofencing();
-      await this.stopBackgroundLocationMonitoring();
     }
   }
 
   /**
-   * Start/update geofencing for all saved locations
+   * Start (or restart) the foreground location watcher.
+   * Called whenever saved locations or settings change.
    */
   async updateGeofencing(): Promise<void> {
     const settings = await this.getSettings();
     if (!settings.enabled) {
-      console.log('[LocationService] Geofencing disabled');
+      console.log('[LocationService] Location reminders disabled');
       return;
     }
 
     const permissions = await this.hasPermissions();
-    if (!permissions.background) {
-      console.warn('[LocationService] Background permission required for geofencing');
+    if (!permissions.foreground) {
+      console.warn('[LocationService] Location permission required');
       return;
     }
 
     const locations = await this.getSavedLocations();
     if (locations.length === 0) {
       console.log('[LocationService] No locations to monitor');
+      await this.stopGeofencing();
       return;
     }
 
-    const regions: Location.LocationRegion[] = locations.map(loc => ({
-      identifier: loc.id,
-      latitude: loc.latitude,
-      longitude: loc.longitude,
-      radius: loc.radius,
-      notifyOnEnter: loc.notifyOnEnter,
-      notifyOnExit: loc.notifyOnExit,
-    }));
+    // Stop any existing watcher before starting a new one
+    await this.stopGeofencing();
 
-    try {
-      await Location.startGeofencingAsync(GEOFENCE_TASK, regions);
-      console.log(`[LocationService] Geofencing started for ${regions.length} locations`);
-    } catch (error) {
-      console.error('[LocationService] Start geofencing error:', error);
-    }
+    this.locationSubscription = await Location.watchPositionAsync(
+      {
+        accuracy: Location.Accuracy.Balanced,
+        timeInterval: WATCH_TIME_INTERVAL,
+        distanceInterval: WATCH_DISTANCE_INTERVAL,
+      },
+      (position) => this.handlePositionUpdate(position, settings, locations)
+    );
+
+    console.log(`[LocationService] Foreground watcher started for ${locations.length} location(s)`);
   }
 
   /**
-   * Stop all geofencing
+   * Stop the foreground location watcher
    */
   async stopGeofencing(): Promise<void> {
-    try {
-      const isRegistered = await TaskManager.isTaskRegisteredAsync(GEOFENCE_TASK);
-      if (isRegistered) {
-        await Location.stopGeofencingAsync(GEOFENCE_TASK);
-        console.log('[LocationService] Geofencing stopped');
-      }
-    } catch (error) {
-      console.error('[LocationService] Stop geofencing error:', error);
+    if (this.locationSubscription) {
+      this.locationSubscription.remove();
+      this.locationSubscription = null;
+      this.insideLocations.clear();
+      console.log('[LocationService] Foreground watcher stopped');
     }
   }
 
   /**
-   * Handle geofence events (enter/exit)
+   * Called on every position update from the foreground watcher.
+   * Detects enter/exit transitions for each saved location.
    */
-  private async handleGeofenceEvent(
-    eventType: Location.GeofencingEventType,
-    region: Location.LocationRegion
+  private async handlePositionUpdate(
+    position: Location.LocationObject,
+    settings: LocationSettings,
+    locations: SavedLocation[]
   ): Promise<void> {
-    const settings = await this.getSettings();
-    const locations = await this.getSavedLocations();
-    const location = locations.find(loc => loc.id === region.identifier);
+    const { latitude, longitude } = position.coords;
 
-    if (!location) {
-      console.warn('[Geofence] Unknown location:', region.identifier);
-      return;
-    }
+    for (const loc of locations) {
+      const distance = this.calculateDistance(latitude, longitude, loc.latitude, loc.longitude);
+      const isInside = distance <= loc.radius;
+      const wasInside = this.insideLocations.has(loc.id);
 
-    console.log(`[Geofence] ${eventType === Location.GeofencingEventType.Enter ? 'Entered' : 'Exited'} ${location.name}`);
-
-    if (eventType === Location.GeofencingEventType.Exit && location.type === 'home') {
-      // Leaving home - check for pending items
-      await this.handleLeavingHome(settings);
-    } else if (eventType === Location.GeofencingEventType.Enter) {
-      // Arriving at a location - show relevant notes
-      await this.handleArrivingAtLocation(location, settings);
+      if (isInside && !wasInside) {
+        // Entered this location
+        this.insideLocations.add(loc.id);
+        if (loc.notifyOnEnter) {
+          console.log(`[LocationService] Entered ${loc.name}`);
+          await this.handleArrivingAtLocation(loc, settings);
+        }
+      } else if (!isInside && wasInside) {
+        // Exited this location
+        this.insideLocations.delete(loc.id);
+        if (loc.notifyOnExit && loc.type === 'home') {
+          console.log(`[LocationService] Exited ${loc.name}`);
+          await this.handleLeavingHome(settings);
+        }
+      }
     }
   }
 
   /**
-   * Handle leaving home - show notification only for notes specifically tagged as 'leaving_home'
-   * (notes that mention "leaving home", "going out", "before I leave", etc.)
+   * Handle leaving home - show notification for notes tagged as 'leaving_home'
    */
   private async handleLeavingHome(settings: LocationSettings): Promise<void> {
     if (!settings.leaveHomeReminder) return;
 
-    // Get only notes specifically marked as 'leaving_home' category
     const leavingHomeNotes = await this.getNotesForCategories(['leaving_home']);
 
     if (leavingHomeNotes.length === 0) {
-      // No leaving-home specific notes, don't notify
-      console.log('[Geofence] No leaving-home notes, skipping notification');
+      console.log('[LocationService] No leaving-home notes, skipping notification');
       return;
     }
 
@@ -409,12 +334,10 @@ class LocationService {
       .map(n => n.parsed_data?.summary || n.transcript.substring(0, 30))
       .join(', ');
 
-    const notificationBody = `${itemCount} reminder${itemCount > 1 ? 's' : ''}: ${previewItems}${itemCount > 3 ? '...' : ''}`;
-
     await notificationService.scheduleNotification(
       '🏠 Leaving Home',
-      notificationBody,
-      new Date(Date.now() + 1000) // Immediate
+      `${itemCount} reminder${itemCount > 1 ? 's' : ''}: ${previewItems}${itemCount > 3 ? '...' : ''}`,
+      new Date(Date.now() + 1000)
     );
   }
 
@@ -425,18 +348,14 @@ class LocationService {
     location: SavedLocation,
     settings: LocationSettings
   ): Promise<void> {
-    // Get relevant note categories for this location type
     const relevantCategories = LOCATION_TO_CATEGORIES[location.type] || [];
 
-    if (relevantCategories.length === 0) {
-      return;
-    }
+    if (relevantCategories.length === 0) return;
 
-    // Get notes matching these categories
     const relevantNotes = await this.getNotesForCategories(relevantCategories);
 
     if (relevantNotes.length === 0 && settings.smartFilteringEnabled) {
-      console.log(`[Geofence] No relevant notes for ${location.name}`);
+      console.log(`[LocationService] No relevant notes for ${location.name}`);
       return;
     }
 
@@ -459,26 +378,20 @@ class LocationService {
    * Get notes for specific categories
    * Only returns location-relevant notes (not time-based reminders)
    */
-  private async getNotesForCategories(
-    categories: NoteCategory[]
-  ): Promise<any[]> {
+  private async getNotesForCategories(categories: NoteCategory[]): Promise<any[]> {
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return [];
 
-      // Return empty if no categories specified (safety check)
-      if (categories.length === 0) {
-        console.log('[LocationService] No categories specified, returning empty');
-        return [];
-      }
+      if (categories.length === 0) return [];
 
       const { data, error } = await supabase
         .from('notes')
         .select('*')
         .eq('user_id', user.id)
-        .in('location_category', categories) // Filter by specific categories
+        .in('location_category', categories)
         .eq('location_completed', false)
-        .or('is_reminder.is.null,is_reminder.eq.false') // Exclude time-based reminders
+        .or('is_reminder.is.null,is_reminder.eq.false')
         .order('created_at', { ascending: false });
 
       if (error) throw error;
@@ -524,7 +437,7 @@ class LocationService {
   async searchAddress(query: string): Promise<Location.LocationGeocodedAddress[]> {
     try {
       const results = await Location.geocodeAsync(query);
-      return results.map((result, index) => ({
+      return results.map((result) => ({
         ...result,
         name: query,
         formattedAddress: query,
@@ -551,254 +464,11 @@ class LocationService {
     }
   }
 
-  // ===== AUTOMATIC STORE DETECTION =====
-
-  /**
-   * Start background location monitoring for automatic store detection
-   */
-  async startBackgroundLocationMonitoring(): Promise<void> {
-    const settings = await this.getSettings();
-    if (!settings.enabled || !settings.autoDetectStores) {
-      console.log('[LocationService] Auto store detection disabled');
-      return;
-    }
-
-    const permissions = await this.hasPermissions();
-    if (!permissions.background) {
-      console.warn('[LocationService] Background permission required for store detection');
-      return;
-    }
-
-    try {
-      const isRegistered = await TaskManager.isTaskRegisteredAsync(BACKGROUND_LOCATION_TASK);
-      if (isRegistered) {
-        console.log('[LocationService] Background location already running');
-        return;
-      }
-
-      await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, {
-        accuracy: Location.Accuracy.Balanced,
-        timeInterval: 5 * 60 * 1000, // Every 5 minutes
-        distanceInterval: 100, // Or every 100 meters
-        deferredUpdatesInterval: 5 * 60 * 1000,
-        showsBackgroundLocationIndicator: true,
-        foregroundService: {
-          notificationTitle: 'Location Reminders Active',
-          notificationBody: 'Monitoring for nearby stores',
-          notificationColor: '#4A90A4',
-        },
-      });
-      console.log('[LocationService] Background location monitoring started');
-    } catch (error) {
-      console.error('[LocationService] Start background location error:', error);
-    }
-  }
-
-  /**
-   * Stop background location monitoring
-   */
-  async stopBackgroundLocationMonitoring(): Promise<void> {
-    try {
-      const isRegistered = await TaskManager.isTaskRegisteredAsync(BACKGROUND_LOCATION_TASK);
-      if (isRegistered) {
-        await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
-        console.log('[LocationService] Background location monitoring stopped');
-      }
-    } catch (error) {
-      console.error('[LocationService] Stop background location error:', error);
-    }
-  }
-
-  /**
-   * Handle location updates from background monitoring
-   * Uses reverse geocoding to detect if user is near a store
-   */
-  async handleLocationUpdate(location: Location.LocationObject): Promise<void> {
-    const settings = await this.getSettings();
-    if (!settings.enabled || !settings.autoDetectStores) return;
-
-    const { latitude, longitude } = location.coords;
-
-    try {
-      // Reverse geocode to get place information
-      const address = await this.reverseGeocode(latitude, longitude);
-      if (!address) return;
-
-      // Build a search string from address components
-      const searchText = [
-        address.name,
-        address.street,
-        address.city,
-        address.region,
-      ].filter(Boolean).join(' ').toLowerCase();
-
-      console.log('[LocationService] Checking location:', searchText);
-
-      // Detect store category from the address
-      const detectedCategory = this.detectStoreCategoryFromAddress(searchText);
-      if (!detectedCategory) return;
-
-      // Check cooldown to avoid spamming notifications
-      const canNotify = await this.checkNotificationCooldown(detectedCategory, latitude, longitude);
-      if (!canNotify) {
-        console.log(`[LocationService] Cooldown active for ${detectedCategory}`);
-        return;
-      }
-
-      // Get relevant notes for this category
-      const relevantNotes = await this.getNotesForCategories([detectedCategory]);
-
-      if (relevantNotes.length === 0 && settings.smartFilteringEnabled) {
-        console.log(`[LocationService] No relevant notes for ${detectedCategory}`);
-        return;
-      }
-
-      if (relevantNotes.length > 0) {
-        // Save this detection to prevent repeat notifications
-        await this.saveLastDetection(detectedCategory, latitude, longitude);
-
-        const storeName = this.getStoreNameFromAddress(searchText);
-        const itemCount = relevantNotes.length;
-        const previewItems = relevantNotes
-          .slice(0, 3)
-          .map(n => n.parsed_data?.summary || n.transcript.substring(0, 30))
-          .join(', ');
-
-        const emoji = this.getCategoryEmoji(detectedCategory);
-        await notificationService.scheduleNotification(
-          `${emoji} Near ${storeName}`,
-          `${itemCount} item${itemCount > 1 ? 's' : ''}: ${previewItems}${itemCount > 3 ? '...' : ''}`,
-          new Date(Date.now() + 1000)
-        );
-
-        console.log(`[LocationService] Sent notification for ${detectedCategory} at ${storeName}`);
-      }
-    } catch (error) {
-      console.error('[LocationService] Handle location update error:', error);
-    }
-  }
-
-  /**
-   * Detect store category from address text
-   */
-  private detectStoreCategoryFromAddress(addressText: string): NoteCategory | null {
-    const lower = addressText.toLowerCase();
-
-    // Check each category's store chains
-    for (const [category, chains] of Object.entries(STORE_CHAINS)) {
-      if (chains.some(chain => lower.includes(chain))) {
-        return category as NoteCategory;
-      }
-    }
-
-    return null;
-  }
-
-  /**
-   * Get a friendly store name from address
-   */
-  private getStoreNameFromAddress(addressText: string): string {
-    const lower = addressText.toLowerCase();
-
-    // Try to match known store names
-    const allStores = Object.values(STORE_CHAINS).flat();
-    for (const store of allStores) {
-      if (lower.includes(store)) {
-        // Capitalize first letter of each word
-        return store.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
-      }
-    }
-
-    return 'a store';
-  }
-
-  /**
-   * Get emoji for category
-   */
-  private getCategoryEmoji(category: NoteCategory): string {
-    const emojis: Record<NoteCategory, string> = {
-      grocery: '🛒',
-      shopping: '🛍️',
-      pharmacy: '💊',
-      health: '🏥',
-      fitness: '💪',
-      work: '💼',
-      errand: '📬',
-      leaving_home: '🏠',
-      arriving_home: '🏡',
-      general: '📍',
-    };
-    return emojis[category] || '📍';
-  }
-
-  /**
-   * Check if we can send a notification (cooldown logic)
-   */
-  private async checkNotificationCooldown(
-    category: NoteCategory,
-    latitude: number,
-    longitude: number
-  ): Promise<boolean> {
-    try {
-      const data = await AsyncStorage.getItem(LAST_DETECTED_STORE_KEY);
-      if (!data) return true;
-
-      const lastDetection = JSON.parse(data);
-      const now = Date.now();
-
-      // Check if same category and within cooldown period
-      if (lastDetection.category === category) {
-        const timeSinceLastDetection = now - lastDetection.timestamp;
-        if (timeSinceLastDetection < STORE_COOLDOWN_MS) {
-          // Also check if we're still in roughly the same location (within 500m)
-          const distance = this.calculateDistance(
-            latitude,
-            longitude,
-            lastDetection.latitude,
-            lastDetection.longitude
-          );
-          if (distance < 500) {
-            return false; // Still at same store, don't notify again
-          }
-        }
-      }
-
-      return true;
-    } catch (error) {
-      return true; // If error, allow notification
-    }
-  }
-
-  /**
-   * Save last store detection
-   */
-  private async saveLastDetection(
-    category: NoteCategory,
-    latitude: number,
-    longitude: number
-  ): Promise<void> {
-    try {
-      await AsyncStorage.setItem(LAST_DETECTED_STORE_KEY, JSON.stringify({
-        category,
-        latitude,
-        longitude,
-        timestamp: Date.now(),
-      }));
-    } catch (error) {
-      console.error('[LocationService] Save detection error:', error);
-    }
-  }
-
   /**
    * Calculate distance between two coordinates in meters (Haversine formula)
    */
-  private calculateDistance(
-    lat1: number,
-    lon1: number,
-    lat2: number,
-    lon2: number
-  ): number {
-    const R = 6371e3; // Earth's radius in meters
+  private calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
+    const R = 6371e3;
     const φ1 = (lat1 * Math.PI) / 180;
     const φ2 = (lat2 * Math.PI) / 180;
     const Δφ = ((lat2 - lat1) * Math.PI) / 180;
@@ -807,9 +477,8 @@ class LocationService {
     const a =
       Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
       Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 
-    return R * c;
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   }
 }
 

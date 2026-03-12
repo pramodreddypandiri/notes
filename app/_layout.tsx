@@ -60,7 +60,7 @@ export default function RootLayout() {
     return () => subscription.remove();
   }, [isAuthenticated]);
 
-  // Initialize location service and start geofencing/background monitoring on login
+  // Initialize location service and start geofencing on login
   const hasInitializedLocation = useRef(false);
   useEffect(() => {
     if (isAuthenticated && !hasInitializedLocation.current) {
@@ -73,10 +73,6 @@ export default function RootLayout() {
           if (settings.enabled) {
             // Start geofencing for saved locations
             await locationService.updateGeofencing();
-            // Start background location monitoring for auto store detection
-            if (settings.autoDetectStores) {
-              await locationService.startBackgroundLocationMonitoring();
-            }
           }
           console.log('[App] Location service initialized');
         } catch (error) {

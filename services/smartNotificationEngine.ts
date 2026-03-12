@@ -123,8 +123,6 @@ const CONTENT_CACHE_KEYS = {
 interface TaskContext {
   transcript: string;
   event_location: string | null;
-  place_search_query: string | null;
-  place_intent: boolean;
 }
 
 /** Local date string YYYY-MM-DD (not UTC) */
@@ -144,7 +142,7 @@ async function getTodaysTasks(): Promise<TaskContext[]> {
 
     const { data } = await supabase
       .from('notes')
-      .select('transcript, event_location, place_search_query, place_intent')
+      .select('transcript, event_location')
       .eq('user_id', user.id)
       .eq('note_type', 'task')
       .eq('is_completed', false)
@@ -210,8 +208,8 @@ async function generateMorningContent(
   if (cached) return JSON.parse(cached) as NotifContent;
 
   // Build task context for the AI
-  const locationTask = tasks.find(t => t.event_location || t.place_intent);
-  const place = locationTask?.event_location ?? locationTask?.place_search_query ?? null;
+  const locationTask = tasks.find(t => t.event_location);
+  const place = locationTask?.event_location ?? null;
   const taskLines = tasks.slice(0, 3).map(t => `- ${t.transcript}`).join('\n');
   const dayName = new Date().toLocaleDateString('en-US', { weekday: 'long' });
 

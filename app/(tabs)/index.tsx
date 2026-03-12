@@ -64,7 +64,6 @@ interface SmartTip {
 const GENERIC_TIPS: SmartTip[] = [
   { text: "Your future self will thank you for that grocery list you keep ignoring", emoji: "🛒" },
   { text: "'I'll remember it later' has a 0% success rate. Voice note it", emoji: "🧠" },
-  { text: "The best time to plan your weekend was Monday. The second best is now", emoji: "📅" },
   { text: "That thing you've been putting off? It takes 5 minutes. You spent 3 days avoiding it", emoji: "⏱️" },
   { text: "You have 47 mental tabs open. Close some by recording a voice note", emoji: "🗂️" },
   { text: "Plot twist: your phone can do more than scroll. Like capture brilliant ideas", emoji: "💡" },

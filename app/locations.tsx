@@ -66,7 +66,6 @@ export default function LocationsScreen() {
     enabled: false,
     smartFilteringEnabled: true,
     leaveHomeReminder: true,
-    autoDetectStores: true,
   });
   const [loading, setLoading] = useState(true);
   const [showAddModal, setShowAddModal] = useState(false);
@@ -102,17 +101,6 @@ export default function LocationsScreen() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
     if (value) {
-      // Check if running in Expo Go
-      if (locationService.isExpoGo()) {
-        Alert.alert(
-          'Development Build Required',
-          'Background location features require a development build. In Expo Go, only foreground location works.\n\nTo enable full location reminders, run:\nnpx expo run:ios',
-          [{ text: 'OK' }]
-        );
-        // Still allow enabling for foreground features
-      }
-
-      // Request permissions when enabling
       const granted = await locationService.requestPermissions();
       if (!granted) {
         Alert.alert(
@@ -138,12 +126,6 @@ export default function LocationsScreen() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setSettings(prev => ({ ...prev, leaveHomeReminder: value }));
     await locationService.updateSettings({ leaveHomeReminder: value });
-  };
-
-  const handleToggleAutoDetect = async (value: boolean) => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    setSettings(prev => ({ ...prev, autoDetectStores: value }));
-    await locationService.updateSettings({ autoDetectStores: value });
   };
 
   const handleDeleteLocation = (location: SavedLocation) => {
@@ -264,31 +246,6 @@ export default function LocationsScreen() {
 
               {settings.enabled && (
                 <>
-                  <View style={[styles.divider, { backgroundColor: themedColors.surface.border }]} />
-
-                  <View style={styles.settingsRow}>
-                    <View style={styles.settingsRowIcon}>
-                      <Ionicons name="storefront" size={22} color={colors.primary[500]} />
-                    </View>
-                    <View style={styles.settingsRowContent}>
-                      <Text style={[styles.settingsRowTitle, { color: themedColors.text.primary }]}>
-                        Auto-Detect Stores
-                      </Text>
-                      <Text style={[styles.settingsRowDescription, { color: themedColors.text.tertiary }]}>
-                        Notify at Walmart, Costco, CVS, and other stores automatically
-                      </Text>
-                    </View>
-                    <Switch
-                      value={settings.autoDetectStores}
-                      onValueChange={handleToggleAutoDetect}
-                      trackColor={{
-                        false: colors.neutral[200],
-                        true: colors.primary[400],
-                      }}
-                      thumbColor={colors.neutral[0]}
-                    />
-                  </View>
-
                   <View style={[styles.divider, { backgroundColor: themedColors.surface.border }]} />
 
                   <View style={styles.settingsRow}>

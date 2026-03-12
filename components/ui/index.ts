@@ -10,8 +10,6 @@ export { PullToRefresh, AnimatedFlatListContainer } from './PullToRefresh';
 export {
   Skeleton,
   NoteCardSkeleton,
-  PlanCardSkeleton,
   SettingsRowSkeleton,
   NotesListSkeleton,
-  PlansListSkeleton,
 } from './SkeletonLoader';

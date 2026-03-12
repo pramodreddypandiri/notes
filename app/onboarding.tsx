@@ -2,7 +2,7 @@
  * Onboarding Flow
  *
  * Multi-step onboarding to collect user preferences for AI personalization.
- * Questions: Age, Gender, Wake/Bed times, Hobbies, Tone, Self-description
+ * Questions: Wake/Bed times, Tone
  */
 
 import React, { useState, useCallback, useEffect } from 'react';
@@ -11,8 +11,6 @@ import {
   View,
   Text,
   Dimensions,
-  KeyboardAvoidingView,
-  Platform,
   ScrollView,
 } from 'react-native';
 import Animated, {
@@ -34,7 +32,6 @@ import {
   OnboardingProgress,
   OnboardingScreen,
   OnboardingTimePicker,
-  OnboardingTextInput,
 } from '../components/onboarding';
 import { PremiumButton } from '../components/ui/PremiumButton';
 import { AnimatedPressable } from '../components/ui/AnimatedPressable';
@@ -48,22 +45,6 @@ import { colors, typography, spacing, borderRadius, animation, textPresets } fro
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 // Onboarding question options
-const AGE_OPTIONS = [
-  { value: '18-24', label: '18-24', emoji: '🌱', description: 'Just getting started' },
-  { value: '25-34', label: '25-34', emoji: '🚀', description: 'Building momentum' },
-  { value: '35-44', label: '35-44', emoji: '⭐', description: 'In your prime' },
-  { value: '45-54', label: '45-54', emoji: '🎯', description: 'Experienced & focused' },
-  { value: '55-64', label: '55-64', emoji: '🏆', description: 'Seasoned achiever' },
-  { value: '65+', label: '65+', emoji: '👑', description: 'Wisdom & experience' },
-];
-
-const GENDER_OPTIONS = [
-  { value: 'male', label: 'Male', emoji: '👨', description: '' },
-  { value: 'female', label: 'Female', emoji: '👩', description: '' },
-  { value: 'non_binary', label: 'Non-binary', emoji: '🧑', description: '' },
-  { value: 'prefer_not_to_say', label: 'Prefer not to say', emoji: '🤐', description: '' },
-];
-
 const TONE_OPTIONS = [
   { value: 'professional', label: 'Professional', emoji: '💼', description: 'Formal and business-like' },
   { value: 'friendly', label: 'Friendly', emoji: '😊', description: 'Warm and approachable' },
@@ -71,27 +52,23 @@ const TONE_OPTIONS = [
   { value: 'motivational', label: 'Motivational', emoji: '🔥', description: 'Energetic and inspiring' },
 ];
 
-const TOTAL_STEPS = 9; // welcome + 7 questions + complete
+const TOTAL_STEPS = 5; // welcome + 3 questions + complete
 
-type Step = 'welcome' | 'age' | 'gender' | 'wake_time' | 'bed_time' | 'hobbies' | 'tone' | 'self_description' | 'complete';
+type Step = 'welcome' | 'wake_time' | 'bed_time' | 'tone' | 'complete';
 
-const STEP_ORDER: Step[] = ['welcome', 'age', 'gender', 'wake_time', 'bed_time', 'hobbies', 'tone', 'self_description', 'complete'];
+const STEP_ORDER: Step[] = ['welcome', 'wake_time', 'bed_time', 'tone', 'complete'];
 
 export default function OnboardingFlow() {
   const { retake } = useLocalSearchParams<{ retake?: string }>();
   const isRetake = retake === 'true';
 
-  const [step, setStep] = useState<Step>(isRetake ? 'age' : 'welcome');
+  const [step, setStep] = useState<Step>(isRetake ? 'wake_time' : 'welcome');
 
   // Profile data
   const [profileData, setProfileData] = useState({
-    age_range: null as string | null,
-    gender: null as string | null,
     wake_up_time: null as string | null,
     bed_time: null as string | null,
-    hobbies: '',
     tone: null as string | null,
-    self_description: '',
   });
 
   const [isLoading, setIsLoading] = useState(false);
@@ -102,13 +79,9 @@ export default function OnboardingFlow() {
       getUserProfile().then((profile) => {
         if (profile) {
           setProfileData({
-            age_range: profile.age_range ?? null,
-            gender: profile.gender ?? null,
             wake_up_time: profile.wake_up_time ?? null,
             bed_time: profile.bed_time ?? null,
-            hobbies: profile.hobbies ?? '',
             tone: profile.tone ?? null,
-            self_description: profile.self_description ?? '',
           });
         }
       });
@@ -124,9 +97,9 @@ export default function OnboardingFlow() {
 
     const currentIndex = STEP_ORDER.indexOf(step);
     if (currentIndex < STEP_ORDER.length - 2) {
-      // Not at self_description yet
+      // Not at tone yet
       setStep(STEP_ORDER[currentIndex + 1]);
-    } else if (step === 'self_description') {
+    } else if (step === 'tone') {
       await handleComplete();
     }
   }, [step, profileData]);
@@ -135,10 +108,10 @@ export default function OnboardingFlow() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
     const currentIndex = STEP_ORDER.indexOf(step);
-    const minIndex = isRetake ? STEP_ORDER.indexOf('age') : 0;
+    const minIndex = isRetake ? STEP_ORDER.indexOf('wake_time') : 0;
     if (currentIndex > minIndex && step !== 'complete') {
       setStep(STEP_ORDER[currentIndex - 1]);
-    } else if (isRetake && step === 'age') {
+    } else if (isRetake && step === 'wake_time') {
       router.back();
     }
   }, [step, isRetake]);
@@ -148,13 +121,9 @@ export default function OnboardingFlow() {
     try {
       // Save all profile data
       await updateUserProfile({
-        age_range: profileData.age_range as any,
-        gender: profileData.gender as any,
         wake_up_time: profileData.wake_up_time,
         bed_time: profileData.bed_time,
-        hobbies: profileData.hobbies || null,
         tone: profileData.tone as any,
-        self_description: profileData.self_description || null,
       });
 
       await completeOnboarding();
@@ -185,20 +154,12 @@ export default function OnboardingFlow() {
   // Check if current step has valid input
   const canProceed = (): boolean => {
     switch (step) {
-      case 'age':
-        return !!profileData.age_range;
-      case 'gender':
-        return !!profileData.gender;
       case 'wake_time':
         return !!profileData.wake_up_time;
       case 'bed_time':
         return !!profileData.bed_time;
-      case 'hobbies':
-        return profileData.hobbies.trim().length > 0;
       case 'tone':
         return !!profileData.tone;
-      case 'self_description':
-        return profileData.self_description.trim().length > 0;
       default:
         return true;
     }
@@ -209,34 +170,6 @@ export default function OnboardingFlow() {
     switch (step) {
       case 'welcome':
         return <WelcomeStep onGetStarted={handleNext} onSkip={handleSkip} />;
-
-      case 'age':
-        return (
-          <SelectionStep
-            title="What's your age range?"
-            subtitle="This helps us personalize your experience"
-            options={AGE_OPTIONS}
-            value={profileData.age_range}
-            onSelect={(value) => updateProfile('age_range', value)}
-            onNext={handleNext}
-            onBack={handleBack}
-            canProceed={canProceed()}
-          />
-        );
-
-      case 'gender':
-        return (
-          <SelectionStep
-            title="How do you identify?"
-            subtitle="Optional - helps us personalize content"
-            options={GENDER_OPTIONS}
-            value={profileData.gender}
-            onSelect={(value) => updateProfile('gender', value)}
-            onNext={handleNext}
-            onBack={handleBack}
-            canProceed={canProceed()}
-          />
-        );
 
       case 'wake_time':
         return (
@@ -266,22 +199,6 @@ export default function OnboardingFlow() {
           />
         );
 
-      case 'hobbies':
-        return (
-          <TextInputStep
-            title="What are your hobbies?"
-            subtitle="This helps the AI understand you better"
-            placeholder="e.g., Reading, hiking, photography, cooking..."
-            value={profileData.hobbies}
-            onChange={(value) => updateProfile('hobbies', value)}
-            onNext={handleNext}
-            onBack={handleBack}
-            canProceed={canProceed()}
-            icon="heart-outline"
-            multiline
-          />
-        );
-
       case 'tone':
         return (
           <SelectionStep
@@ -293,24 +210,8 @@ export default function OnboardingFlow() {
             onNext={handleNext}
             onBack={handleBack}
             canProceed={canProceed()}
-          />
-        );
-
-      case 'self_description':
-        return (
-          <TextInputStep
-            title="Who do you think you are?"
-            subtitle="Describe yourself briefly - this helps personalize your experience"
-            placeholder="e.g., A creative entrepreneur who loves learning new things..."
-            value={profileData.self_description}
-            onChange={(value) => updateProfile('self_description', value)}
-            onNext={handleNext}
-            onBack={handleBack}
-            canProceed={canProceed()}
-            isLoading={isLoading}
             isLast
-            maxLength={150}
-            icon="person-outline"
+            isLoading={isLoading}
           />
         );
 
@@ -427,6 +328,8 @@ function SelectionStep({
   onNext,
   onBack,
   canProceed,
+  isLast = false,
+  isLoading = false,
 }: {
   title: string;
   subtitle: string;
@@ -436,6 +339,8 @@ function SelectionStep({
   onNext: () => void;
   onBack: () => void;
   canProceed: boolean;
+  isLast?: boolean;
+  isLoading?: boolean;
 }) {
   return (
     <OnboardingScreen
@@ -447,8 +352,8 @@ function SelectionStep({
             <Ionicons name="arrow-back" size={24} color={colors.neutral[600]} />
           </AnimatedPressable>
           <View style={styles.nextButtonContainer}>
-            <PremiumButton onPress={onNext} gradient size="lg" disabled={!canProceed}>
-              Continue
+            <PremiumButton onPress={onNext} gradient size="lg" disabled={!canProceed} loading={isLoading}>
+              {isLast ? 'Finish Setup' : 'Continue'}
             </PremiumButton>
           </View>
         </View>
@@ -520,79 +425,6 @@ function TimeStep({
   );
 }
 
-function TextInputStep({
-  title,
-  subtitle,
-  placeholder,
-  value,
-  onChange,
-  onNext,
-  onBack,
-  canProceed,
-  isLoading = false,
-  isLast = false,
-  maxLength,
-  icon,
-  multiline = false,
-}: {
-  title: string;
-  subtitle: string;
-  placeholder: string;
-  value: string;
-  onChange: (value: string) => void;
-  onNext: () => void;
-  onBack: () => void;
-  canProceed: boolean;
-  isLoading?: boolean;
-  isLast?: boolean;
-  maxLength?: number;
-  icon?: keyof typeof Ionicons.glyphMap;
-  multiline?: boolean;
-}) {
-  return (
-    <KeyboardAvoidingView
-      style={styles.keyboardAvoidingView}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-    >
-      <OnboardingScreen
-        title={title}
-        subtitle={subtitle}
-        footer={
-          <View style={styles.footerButtons}>
-            <AnimatedPressable onPress={onBack} style={styles.backButton}>
-              <Ionicons name="arrow-back" size={24} color={colors.neutral[600]} />
-            </AnimatedPressable>
-            <View style={styles.nextButtonContainer}>
-              <PremiumButton
-                onPress={onNext}
-                gradient
-                size="lg"
-                disabled={!canProceed}
-                loading={isLoading}
-              >
-                {isLast ? 'Finish Setup' : 'Continue'}
-              </PremiumButton>
-            </View>
-          </View>
-        }
-      >
-        <View style={styles.textInputContainer}>
-          <OnboardingTextInput
-            label=""
-            placeholder={placeholder}
-            value={value}
-            onChange={onChange}
-            maxLength={maxLength}
-            icon={icon}
-            multiline={multiline}
-            numberOfLines={multiline ? 4 : 1}
-          />
-        </View>
-      </OnboardingScreen>
-    </KeyboardAvoidingView>
-  );
-}
-
 function CompleteStep() {
   const scale = useSharedValue(0);
   const rotation = useSharedValue(0);
@@ -654,10 +486,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing[5],
     paddingBottom: spacing[4],
   },
-  keyboardAvoidingView: {
-    flex: 1,
-  },
-
   // Welcome step
   welcomeContainer: {
     flex: 1,
@@ -742,12 +570,6 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     paddingVertical: spacing[4],
-  },
-
-  // Text input step
-  textInputContainer: {
-    flex: 1,
-    paddingTop: spacing[4],
   },
 
   // Footer
