@@ -96,12 +96,6 @@ export default function TabLayout() {
           ),
         }}
       />
-      <Tabs.Screen
-        name="me"
-        options={{
-          href: null, // Hidden - removed from tab bar
-        }}
-      />
       {/* Settings tab hidden - accessible via profile icon in TopBar */}
       <Tabs.Screen
         name="settings"
