@@ -11,11 +11,13 @@ export default {
     ios: {
       supportsTablet: false,
       bundleIdentifier: "com.notesapp.voicenotes",
+      usesAppleSignIn: true,
       infoPlist: {
-        NSSpeechRecognitionUsageDescription: "This app uses speech recognition to convert your voice notes to text.",
-        NSMicrophoneUsageDescription: "This app needs microphone access to record voice notes.",
-        NSLocationWhenInUseUsageDescription: "This app uses your location to provide location-based reminders when you arrive at or leave saved places.",
-        NSPhotoLibraryUsageDescription: "This app may access your photo library to attach images to your notes.",
+        NSSpeechRecognitionUsageDescription: "Nottos uses speech recognition to transcribe your spoken voice notes into text, so you can dictate a reminder like \"Call Mom tomorrow at 5pm\" and have it saved as a written note.",
+        NSMicrophoneUsageDescription: "Nottos needs microphone access to record your voice notes. For example, you can tap the microphone button to dictate a journal entry or reminder instead of typing it.",
+        NSCameraUsageDescription: "Nottos uses the camera so you can capture photos to attach to your journal entries and notes. For example, snap a picture of a meal, a whiteboard, or a place to save it with your journal entry.",
+        NSLocationWhenInUseUsageDescription: "Nottos uses your location to trigger location-based reminders. For example, you can save \"Buy milk\" to remind you when you arrive at your local grocery store.",
+        NSPhotoLibraryUsageDescription: "Nottos accesses your photo library so you can attach existing photos to your journal entries and notes. For example, pick a photo from your library to add to a journal entry about your day.",
         ITSAppUsesNonExemptEncryption: false
       }
     },
@@ -44,6 +46,7 @@ export default {
     },
     plugins: [
       "expo-router",
+      "expo-apple-authentication",
       [
         "expo-splash-screen",
         {
@@ -60,7 +63,7 @@ export default {
       [
         "expo-location",
         {
-          locationWhenInUsePermission: "This app uses your location to remind you of tasks when you arrive at or leave saved places."
+          locationWhenInUsePermission: "Nottos uses your location to trigger location-based reminders. For example, you can save \"Buy milk\" to remind you when you arrive at your local grocery store."
         }
       ],
       "@react-native-community/datetimepicker"

@@ -12,6 +12,7 @@ import {
   Platform,
 } from 'react-native';
 import { useRouter } from 'expo-router';
+import * as AppleAuthentication from 'expo-apple-authentication';
 import { supabase } from '../../config/supabase';
 import { useTheme } from '../../context/ThemeContext';
 import { getThemedColors } from '../../theme';
@@ -22,6 +23,7 @@ export default function LoginScreen() {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
+  const [appleLoading, setAppleLoading] = useState(false);
   const router = useRouter();
 
   // Theme
@@ -96,6 +98,23 @@ export default function LoginScreen() {
     }
   };
 
+  const handleAppleSignIn = async () => {
+    setAppleLoading(true);
+    try {
+      const result = await authService.signInWithApple();
+      if (result.success) {
+        // @ts-ignore
+        router.replace('/(tabs)');
+      } else if (result.error && result.error !== 'Sign in was cancelled') {
+        Alert.alert('Error', result.error);
+      }
+    } catch (error: any) {
+      Alert.alert('Error', error.message || 'Failed to sign in with Apple');
+    } finally {
+      setAppleLoading(false);
+    }
+  };
+
   return (
     <KeyboardAvoidingView
       style={[styles.container, { backgroundColor: themedColors.background.primary }]}
@@ -110,6 +129,38 @@ export default function LoginScreen() {
         <Text style={[styles.subtitle, { color: themedColors.text.tertiary }]}>
           Sign in to your account
         </Text>
+
+        {/* Sign in with Apple (iOS only) */}
+        {Platform.OS === 'ios' && (
+          <View style={styles.appleButtonContainer}>
+            {appleLoading ? (
+              <View
+                style={[
+                  styles.appleButton,
+                  {
+                    backgroundColor: isDark ? '#fff' : '#000',
+                    justifyContent: 'center',
+                    alignItems: 'center',
+                  },
+                ]}
+              >
+                <ActivityIndicator size="small" color={isDark ? '#000' : '#fff'} />
+              </View>
+            ) : (
+              <AppleAuthentication.AppleAuthenticationButton
+                buttonType={AppleAuthentication.AppleAuthenticationButtonType.SIGN_IN}
+                buttonStyle={
+                  isDark
+                    ? AppleAuthentication.AppleAuthenticationButtonStyle.WHITE
+                    : AppleAuthentication.AppleAuthenticationButtonStyle.BLACK
+                }
+                cornerRadius={8}
+                style={styles.appleButton}
+                onPress={handleAppleSignIn}
+              />
+            )}
+          </View>
+        )}
 
         {/* Google Sign-In Button */}
         <TouchableOpacity
@@ -234,6 +285,13 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     borderWidth: 1,
     marginBottom: 12,
+  },
+  appleButtonContainer: {
+    marginBottom: 12,
+  },
+  appleButton: {
+    width: '100%',
+    height: 50,
   },
   googleIcon: {
     width: 20,

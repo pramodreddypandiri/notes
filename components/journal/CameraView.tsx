@@ -229,7 +229,7 @@ export function CameraView({ visible, onClose, onCapture }: CameraViewProps) {
             Allow camera access to take photos for your journal
           </Text>
           <TouchableOpacity style={styles.permissionButton} onPress={requestPermission}>
-            <Text style={styles.permissionButtonText}>Grant Permission</Text>
+            <Text style={styles.permissionButtonText}>Continue</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.closeButtonAlt} onPress={handleClose}>
             <Text style={styles.closeButtonAltText}>Cancel</Text>

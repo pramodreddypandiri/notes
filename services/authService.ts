@@ -1,5 +1,8 @@
 import * as WebBrowser from 'expo-web-browser';
 import * as Linking from 'expo-linking';
+import * as AppleAuthentication from 'expo-apple-authentication';
+import * as Crypto from 'expo-crypto';
+import { Platform } from 'react-native';
 import { supabase } from '../config/supabase';
 
 /**
@@ -111,6 +114,72 @@ class AuthService {
     } catch (error: any) {
       console.error('Google OAuth error:', error);
       return { success: false, error: error.message || 'Failed to sign in with Google' };
+    }
+  }
+
+  /**
+   * Sign in with Apple using native iOS Sign in with Apple,
+   * then exchange the identity token for a Supabase session.
+   * iOS only — caller must hide the button on Android.
+   */
+  async signInWithApple(): Promise<{ success: boolean; error?: string }> {
+    if (Platform.OS !== 'ios') {
+      return { success: false, error: 'Sign in with Apple is only available on iOS' };
+    }
+
+    try {
+      const isAvailable = await AppleAuthentication.isAvailableAsync();
+      if (!isAvailable) {
+        return { success: false, error: 'Sign in with Apple is not available on this device' };
+      }
+
+      const rawNonce = Crypto.randomUUID();
+      const hashedNonce = await Crypto.digestStringAsync(
+        Crypto.CryptoDigestAlgorithm.SHA256,
+        rawNonce
+      );
+
+      const credential = await AppleAuthentication.signInAsync({
+        requestedScopes: [
+          AppleAuthentication.AppleAuthenticationScope.FULL_NAME,
+          AppleAuthentication.AppleAuthenticationScope.EMAIL,
+        ],
+        nonce: hashedNonce,
+      });
+
+      if (!credential.identityToken) {
+        return { success: false, error: 'Apple did not return an identity token' };
+      }
+
+      const { error } = await supabase.auth.signInWithIdToken({
+        provider: 'apple',
+        token: credential.identityToken,
+        nonce: rawNonce,
+      });
+
+      if (error) {
+        console.error('Supabase Apple sign-in error:', error);
+        return { success: false, error: error.message };
+      }
+
+      // Apple only returns the user's name on the first sign-in.
+      // Persist it to the Supabase user metadata so it's available later.
+      const fullName = credential.fullName;
+      const composedName = [fullName?.givenName, fullName?.familyName]
+        .filter(Boolean)
+        .join(' ')
+        .trim();
+      if (composedName) {
+        await supabase.auth.updateUser({ data: { full_name: composedName } });
+      }
+
+      return { success: true };
+    } catch (error: any) {
+      if (error?.code === 'ERR_REQUEST_CANCELED') {
+        return { success: false, error: 'Sign in was cancelled' };
+      }
+      console.error('Apple sign-in error:', error);
+      return { success: false, error: error?.message || 'Failed to sign in with Apple' };
     }
   }
 
