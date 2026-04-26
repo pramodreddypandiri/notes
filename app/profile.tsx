@@ -68,6 +68,8 @@ export default function ProfileScreen() {
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [accountLoading, setAccountLoading] = useState(false);
+  const [showNameModal, setShowNameModal] = useState(false);
+  const [displayNameInput, setDisplayNameInput] = useState('');
 
   // Location modal state
   const [showLocationModal, setShowLocationModal] = useState(false);
@@ -160,6 +162,29 @@ export default function ProfileScreen() {
       setConfirmPassword('');
     } else {
       Alert.alert('Error', result.error || 'Failed to change password');
+    }
+  };
+
+  const handleSaveDisplayName = async () => {
+    const trimmed = displayNameInput.trim();
+    if (!trimmed) {
+      Alert.alert('Error', 'Please enter a name');
+      return;
+    }
+
+    setAccountLoading(true);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+
+    const result = await authService.updateDisplayName(trimmed);
+
+    setAccountLoading(false);
+
+    if (result.success) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      setShowNameModal(false);
+      await loadUserData();
+    } else {
+      Alert.alert('Error', result.error || 'Failed to update name');
     }
   };
 
@@ -446,11 +471,28 @@ export default function ProfileScreen() {
                 </View>
                 <View style={styles.accountInfo}>
                   <Text style={[styles.accountEmail, { color: themedColors.text.primary }]}>
-                    {user.user_metadata?.full_name || user.email}
+                    {user.user_metadata?.full_name || 'Add your name'}
                   </Text>
                   <Text style={[styles.accountLabel, { color: themedColors.text.tertiary }]}>{user.email}</Text>
                 </View>
               </View>
+
+              <View style={[styles.divider, { backgroundColor: themedColors.surface.border }]} />
+
+              <SettingsRow
+                icon="person-outline"
+                title="Display Name"
+                description={user.user_metadata?.full_name || 'Tap to add your name'}
+                themedColors={themedColors}
+                trailing={
+                  <Ionicons name="chevron-forward" size={20} color={themedColors.text.muted} />
+                }
+                onPress={() => {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  setDisplayNameInput(user.user_metadata?.full_name || '');
+                  setShowNameModal(true);
+                }}
+              />
 
               {/* Only show password change for email/password users, not OAuth */}
               {isEmailUser && (
@@ -891,6 +933,78 @@ export default function ProfileScreen() {
                   </View>
 
                   {/* Extra bottom padding for safe area */}
+                  <View style={{ height: insets.bottom + spacing[2] }} />
+                </View>
+              </TouchableWithoutFeedback>
+            </View>
+          </TouchableWithoutFeedback>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      {/* Display Name Modal */}
+      <Modal
+        visible={showNameModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowNameModal(false)}
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={{ flex: 1 }}
+        >
+          <TouchableWithoutFeedback onPress={() => setShowNameModal(false)}>
+            <View style={styles.bottomSheetOverlay}>
+              <TouchableWithoutFeedback>
+                <View style={[styles.bottomSheetContent, { backgroundColor: themedColors.surface.primary }]}>
+                  <View style={styles.bottomSheetHandle}>
+                    <View style={[styles.bottomSheetHandleBar, { backgroundColor: themedColors.text.muted + '40' }]} />
+                  </View>
+
+                  <Text style={[styles.modalTitle, { color: themedColors.text.primary }]}>
+                    Display Name
+                  </Text>
+
+                  <Text style={[styles.passwordHint, { color: themedColors.text.tertiary, marginBottom: spacing[3] }]}>
+                    This is how your name appears in the app.
+                  </Text>
+
+                  <TextInput
+                    style={[
+                      styles.modalInput,
+                      {
+                        backgroundColor: themedColors.input.background,
+                        borderColor: themedColors.input.border,
+                        color: themedColors.text.primary,
+                      },
+                    ]}
+                    placeholder="Your name"
+                    placeholderTextColor={themedColors.input.placeholder}
+                    value={displayNameInput}
+                    onChangeText={setDisplayNameInput}
+                    autoCapitalize="words"
+                    autoFocus
+                    maxLength={64}
+                    returnKeyType="done"
+                    onSubmitEditing={handleSaveDisplayName}
+                  />
+
+                  <View style={styles.bottomSheetButtons}>
+                    <PremiumButton
+                      onPress={handleSaveDisplayName}
+                      loading={accountLoading}
+                      fullWidth
+                    >
+                      Save
+                    </PremiumButton>
+                    <PremiumButton
+                      onPress={() => setShowNameModal(false)}
+                      variant="secondary"
+                      fullWidth
+                    >
+                      Cancel
+                    </PremiumButton>
+                  </View>
+
                   <View style={{ height: insets.bottom + spacing[2] }} />
                 </View>
               </TouchableWithoutFeedback>
